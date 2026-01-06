@@ -54,6 +54,14 @@ jobs:
           echo "tag=$TEST_TAG" >> $GITHUB_OUTPUT
           echo "Created test tag: $TEST_TAG"
 
+      - name: Configure GoReleaser for test mode
+        # Set draft: true in .goreleaser.yaml for test releases
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          # Set draft to true for test releases
+          sed -i 's/^  draft: false/  draft: true/' .goreleaser.yaml
+          echo "Configured GoReleaser for draft release (test mode)"
+
       - name: Run GoReleaser (Draft Release for Testing)
         # Create draft release when manually triggered for testing
         # Uses test Homebrew tap (homebrew-orla-test) instead of production tap
@@ -65,7 +73,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }} # Same token works for test tap
-          TEST_MODE: "true" # This makes it a draft release and uses test tap (see .goreleaser.yaml)
+          TEST_MODE: "true" # This uses test tap (see .goreleaser.yaml)
 
       - name: Note about test release
         if: github.event_name == 'workflow_dispatch'
