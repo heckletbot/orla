@@ -235,7 +235,3 @@ response, err := executor.ExecuteWithTools(
 ```
 
 **Note**: Tools are handled client-side via MCP using the official MCP SDK's `ClientSession`. The daemon handles inference; the client handles the agent loop (tool calling, iteration).
-
-## Example: Story Finishing Game
-
-See `examples/story_finishing.go` for a complete example of using this API to run multi-agent experiments.
