@@ -15,6 +15,12 @@ services:
     command: ["--model", "${VLLM_MODEL:-Qwen/Qwen3-4B-Instruct-2507}"]
     ipc: host
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
     deploy:
       resources:
         reservations:
@@ -37,7 +43,8 @@ services:
     volumes:
       - ./orla-vllm.yaml:/config/orla.yaml:ro
     depends_on:
-      - vllm
+      vllm:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
