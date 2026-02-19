@@ -12,15 +12,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Helper function to encode JSON response in test handlers
-// Errors are ignored in test handlers as they indicate test setup issues
 func encodeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v) //nolint:errcheck // Test handler - errors indicate test setup issues
+	_ = json.NewEncoder(w).Encode(v) //nolint:errcheck
 }
 
-// Helper function to decode JSON request in test handlers
-// Returns error for cases where we need to check it
 func decodeJSON(r *http.Request, v interface{}) error {
 	return json.NewDecoder(r.Body).Decode(v)
 }
@@ -61,9 +57,8 @@ func TestClient_Health_NonOKStatus(t *testing.T) {
 }
 
 func TestClient_Health_RequestError(t *testing.T) {
-	// Create a server that closes immediately to simulate connection error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	server.Close() // Close immediately to cause connection error
+	server.Close()
 
 	client := NewClient(server.URL)
 	ctx := context.Background()
@@ -72,17 +67,22 @@ func TestClient_Health_RequestError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to check health")
 }
 
-func TestClient_StartWorkflow_Success(t *testing.T) {
+func TestClient_Execute_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/workflow/start", r.URL.Path)
+		assert.Equal(t, "/api/v1/execute", r.URL.Path)
 		assert.Equal(t, "POST", r.Method)
 
-		var req StartWorkflowRequest
-		_ = decodeJSON(r, &req) //nolint:errcheck
-		assert.Equal(t, "test-workflow", req.WorkflowName)
+		var req ExecuteRequest
+		require.NoError(t, decodeJSON(r, &req))
+		assert.Equal(t, "my-server", req.Server)
+		assert.Equal(t, "test prompt", req.Prompt)
 
-		response := StartWorkflowResponse{
-			ExecutionID: "exec-123",
+		response := ExecuteResponse{
+			Success: true,
+			Response: &TaskResponse{
+				Content:  "test response",
+				Thinking: "test thinking",
+			},
 		}
 		encodeJSON(w, response)
 	}))
@@ -90,15 +90,20 @@ func TestClient_StartWorkflow_Success(t *testing.T) {
 
 	client := NewClient(server.URL)
 	ctx := context.Background()
-	execID, err := client.StartWorkflow(ctx, "test-workflow")
+	resp, err := client.Execute(ctx, &ExecuteRequest{
+		Server: "my-server",
+		Prompt: "test prompt",
+	})
 	require.NoError(t, err)
-	assert.Equal(t, "exec-123", execID)
+	assert.Equal(t, "test response", resp.Content)
+	assert.Equal(t, "test thinking", resp.Thinking)
 }
 
-func TestClient_StartWorkflow_ErrorResponse(t *testing.T) {
+func TestClient_Execute_ErrorResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := StartWorkflowResponse{
-			Error: "workflow not found",
+		response := ExecuteResponse{
+			Success: false,
+			Error:   "execution failed",
 		}
 		encodeJSON(w, response)
 	}))
@@ -106,12 +111,15 @@ func TestClient_StartWorkflow_ErrorResponse(t *testing.T) {
 
 	client := NewClient(server.URL)
 	ctx := context.Background()
-	_, err := client.StartWorkflow(ctx, "test-workflow")
+	_, err := client.Execute(ctx, &ExecuteRequest{
+		Server: "my-server",
+		Prompt: "test prompt",
+	})
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "workflow not found")
+	assert.Contains(t, err.Error(), "execution failed")
 }
 
-func TestClient_StartWorkflow_NonOKStatus(t *testing.T) {
+func TestClient_Execute_NonOKStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte("bad request")) //nolint:errcheck
@@ -120,294 +128,24 @@ func TestClient_StartWorkflow_NonOKStatus(t *testing.T) {
 
 	client := NewClient(server.URL)
 	ctx := context.Background()
-	_, err := client.StartWorkflow(ctx, "test-workflow")
+	_, err := client.Execute(ctx, &ExecuteRequest{
+		Server: "my-server",
+		Prompt: "test prompt",
+	})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "status 400")
 }
 
-func TestClient_GetNextTask_Success(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/workflow/task/next", r.URL.Path)
-		assert.Equal(t, "exec-123", r.URL.Query().Get("execution_id"))
-
-		response := GetNextTaskResponse{
-			Task: &WorkflowTask{
-				AgentProfile: "test-profile",
-				Prompt:       "test prompt",
-				UseContext:   true,
-			},
-			TaskIndex: 0,
-			Complete:  false,
-			LLMServer: "test-server",
-		}
-		w.Header().Set("Content-Type", "application/json")
-		encodeJSON(w, response)
-	}))
-	defer server.Close()
+func TestClient_Execute_RequestError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	server.Close()
 
 	client := NewClient(server.URL)
 	ctx := context.Background()
-	task, taskIndex, complete, serverName, err := client.GetNextTask(ctx, "exec-123")
-	require.NoError(t, err)
-	assert.NotNil(t, task)
-	assert.Equal(t, "test-profile", task.AgentProfile)
-	assert.Equal(t, 0, taskIndex)
-	assert.False(t, complete)
-	assert.Equal(t, "test-server", serverName)
-}
-
-func TestClient_GetNextTask_Complete(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := GetNextTaskResponse{
-			Complete: true,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		encodeJSON(w, response)
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL)
-	ctx := context.Background()
-	_, _, complete, _, err := client.GetNextTask(ctx, "exec-123")
-	require.NoError(t, err)
-	assert.True(t, complete)
-}
-
-func TestClient_ExecuteTask_Success(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/workflow/task/execute", r.URL.Path)
-		assert.Equal(t, "POST", r.Method)
-
-		var req ExecuteTaskRequest
-		require.NoError(t, decodeJSON(r, &req))
-		assert.Equal(t, "exec-123", req.ExecutionID)
-		assert.Equal(t, 0, req.TaskIndex)
-		assert.Equal(t, "test prompt", req.Prompt)
-		assert.NotNil(t, req.Options)
-		assert.NotNil(t, req.Options.MaxTokens)
-		assert.Equal(t, 100, *req.Options.MaxTokens)
-
-		response := ExecuteTaskResponse{
-			Success: true,
-			Response: &TaskResponse{
-				Content:  "test response",
-				Thinking: "test thinking",
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		encodeJSON(w, response)
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL)
-	ctx := context.Background()
-	taskResp, err := client.ExecuteTask(ctx, "exec-123", 0, "test prompt", &ExecuteTaskOptions{MaxTokens: 100})
-	require.NoError(t, err)
-	assert.NotNil(t, taskResp)
-	assert.Equal(t, "test response", taskResp.Content)
-	assert.Equal(t, "test thinking", taskResp.Thinking)
-}
-
-func TestClient_ExecuteTask_WithMaxTokens(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req ExecuteTaskRequest
-		_ = decodeJSON(r, &req) //nolint:errcheck
-		assert.NotNil(t, req.Options)
-		assert.NotNil(t, req.Options.MaxTokens)
-		assert.Equal(t, 50, *req.Options.MaxTokens)
-
-		response := ExecuteTaskResponse{
-			Success: true,
-			Response: &TaskResponse{
-				Content: "test response",
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		encodeJSON(w, response)
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL)
-	ctx := context.Background()
-	taskResp, err := client.ExecuteTask(ctx, "exec-123", 0, "test prompt", &ExecuteTaskOptions{MaxTokens: 50})
-	require.NoError(t, err)
-	assert.NotNil(t, taskResp)
-}
-
-func TestClient_ExecuteTask_WithoutMaxTokens(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req ExecuteTaskRequest
-		_ = decodeJSON(r, &req) //nolint:errcheck
-		assert.True(t, req.Options == nil || req.Options.MaxTokens == nil)
-
-		response := ExecuteTaskResponse{
-			Success: true,
-			Response: &TaskResponse{
-				Content: "test response",
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		encodeJSON(w, response)
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL)
-	ctx := context.Background()
-	taskResp, err := client.ExecuteTask(ctx, "exec-123", 0, "test prompt", nil)
-	require.NoError(t, err)
-	assert.NotNil(t, taskResp)
-}
-
-func TestClient_ExecuteTask_ErrorResponse(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := ExecuteTaskResponse{
-			Success: false,
-			Error:   "execution failed",
-		}
-		w.Header().Set("Content-Type", "application/json")
-		encodeJSON(w, response)
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL)
-	ctx := context.Background()
-	_, err := client.ExecuteTask(ctx, "exec-123", 0, "test prompt", &ExecuteTaskOptions{MaxTokens: 100})
+	_, err := client.Execute(ctx, &ExecuteRequest{
+		Server: "my-server",
+		Prompt: "test prompt",
+	})
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "execution failed")
-}
-
-func TestClient_CompleteTask_Success(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/workflow/task/complete", r.URL.Path)
-		assert.Equal(t, "POST", r.Method)
-
-		var req CompleteTaskRequest
-		require.NoError(t, decodeJSON(r, &req))
-		assert.Equal(t, "exec-123", req.ExecutionID)
-		assert.Equal(t, 0, req.TaskIndex)
-		assert.NotNil(t, req.Response)
-
-		response := CompleteTaskResponse{
-			Success: true,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		encodeJSON(w, response)
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL)
-	ctx := context.Background()
-	taskResp := &TaskResponse{Content: "test response"}
-	err := client.CompleteTask(ctx, "exec-123", 0, taskResp)
-	assert.NoError(t, err)
-}
-
-func TestClient_CompleteTask_ErrorResponse(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := CompleteTaskResponse{
-			Success: false,
-			Error:   "completion failed",
-		}
-		w.Header().Set("Content-Type", "application/json")
-		encodeJSON(w, response)
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL)
-	ctx := context.Background()
-	taskResp := &TaskResponse{Content: "test response"}
-	err := client.CompleteTask(ctx, "exec-123", 0, taskResp)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "completion failed")
-}
-
-func TestClient_GetContext_Success(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/context/test-server", r.URL.Path)
-		assert.Equal(t, "GET", r.Method)
-
-		response := GetContextResponse{
-			Messages: []Message{
-				{Role: "user", Content: "hello"},
-				{Role: "assistant", Content: "hi"},
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		encodeJSON(w, response)
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL)
-	ctx := context.Background()
-	messages, err := client.GetContext(ctx, "test-server")
-	require.NoError(t, err)
-	assert.Len(t, messages, 2)
-	assert.Equal(t, "user", messages[0].Role)
-	assert.Equal(t, "hello", messages[0].Content)
-}
-
-func TestClient_GetContext_ErrorResponse(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := GetContextResponse{
-			Error: "context not found",
-		}
-		w.Header().Set("Content-Type", "application/json")
-		encodeJSON(w, response)
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL)
-	ctx := context.Background()
-	_, err := client.GetContext(ctx, "test-server")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "context not found")
-}
-
-func TestClient_SyncContext_Success(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/context/sync", r.URL.Path)
-		assert.Equal(t, "POST", r.Method)
-
-		var req SyncContextRequest
-		require.NoError(t, decodeJSON(r, &req))
-		assert.Equal(t, "test-server", req.ServerName)
-		assert.Len(t, req.Messages, 2)
-
-		response := SyncContextResponse{
-			Success: true,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		encodeJSON(w, response)
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL)
-	ctx := context.Background()
-	messages := []Message{
-		{Role: "user", Content: "hello"},
-		{Role: "assistant", Content: "hi"},
-	}
-	err := client.SyncContext(ctx, "test-server", messages)
-	assert.NoError(t, err)
-}
-
-func TestClient_SyncContext_ErrorResponse(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := SyncContextResponse{
-			Success: false,
-			Error:   "sync failed",
-		}
-		w.Header().Set("Content-Type", "application/json")
-		encodeJSON(w, response)
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL)
-	ctx := context.Background()
-	messages := []Message{
-		{Role: "user", Content: "hello"},
-	}
-	err := client.SyncContext(ctx, "test-server", messages)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "sync failed")
+	assert.Contains(t, err.Error(), "execute request failed")
 }

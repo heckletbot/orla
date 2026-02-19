@@ -10,7 +10,6 @@ import (
 	"github.com/sashabaranov/go-openai"
 	"go.uber.org/zap"
 
-	"github.com/dorcha-inc/orla/internal/config"
 	"github.com/dorcha-inc/orla/internal/core"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -24,15 +23,15 @@ import (
 // this goes through Ollama's Open-AI compatible API [1].
 // [1] https://docs.ollama.com/api/openai-compatibility
 type OpenAIProvider struct {
-	modelName string
-	client    *openai.Client
-	cfg       *config.OrlaConfig
+	modelName  string
+	client     *openai.Client
+	llmBackend *core.LLMBackend
 }
 
 // NewOpenAIProvider creates a new OpenAI-compatible provider.
 // This works with any server that implements the OpenAI Chat Completions API format.
-func NewOpenAIProvider(modelName string, cfg *config.OrlaConfig) (*OpenAIProvider, error) {
-	baseURL, apiKey, err := getOpenAICompatibleEndpoint(cfg)
+func NewOpenAIProvider(modelName string, llmBackend *core.LLMBackend) (*OpenAIProvider, error) {
+	baseURL, apiKey, err := getOpenAICompatibleEndpoint(llmBackend)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get OpenAI-compatible endpoint: %w", err)
 	}
@@ -45,36 +44,41 @@ func NewOpenAIProvider(modelName string, cfg *config.OrlaConfig) (*OpenAIProvide
 	client := openai.NewClientWithConfig(config)
 
 	return &OpenAIProvider{
-		modelName: modelName,
-		client:    client,
-		cfg:       cfg,
+		modelName:  modelName,
+		client:     client,
+		llmBackend: llmBackend,
 	}, nil
 }
 
 // getOpenAICompatibleEndpoint determines the OpenAI-compatible endpoint URL and API key.
-func getOpenAICompatibleEndpoint(cfg *config.OrlaConfig) (string, string, error) {
-	if cfg == nil || cfg.LLMBackend == nil {
+func getOpenAICompatibleEndpoint(llmBackend *core.LLMBackend) (string, string, error) {
+	if llmBackend == nil {
 		return "", "", fmt.Errorf("llm_backend configuration is required for OpenAI-compatible API")
 	}
 
-	if cfg.LLMBackend.Endpoint == "" {
+	if llmBackend.Endpoint == "" {
 		return "", "", fmt.Errorf("llm_backend.endpoint is required")
 	}
 
-	if cfg.LLMBackend.Type == "" {
+	if llmBackend.Type == "" {
 		return "", "", fmt.Errorf("llm_backend.type is required if llm_backend is set")
 	}
 
-	if cfg.LLMBackend.Type != core.LLMInferenceAPITypeOpenAI {
-		return "", "", fmt.Errorf("[BUG] llm_backend.type must be %s, got '%s': we should not be using this function for non-openai inference servers", core.LLMInferenceAPITypeOpenAI, cfg.LLMBackend.Type)
+	if llmBackend.Type != core.LLMInferenceAPITypeOpenAI {
+		return "", "", fmt.Errorf("[BUG] llm_backend.type must be %s, got '%s': we should not be using this function for non-openai inference servers", core.LLMInferenceAPITypeOpenAI, llmBackend.Type)
 	}
 
-	apiKey := core.GetEnv(cfg.LLMBackend.APIKeyEnvVar)
+	if llmBackend.APIKeyEnvVar == "" {
+		zap.L().Warn("llm_backend.api_key_env_var is not set, skipping authentication for OpenAI-compatible API at %s", zap.String("llm_backend.endpoint", llmBackend.Endpoint))
+		return llmBackend.Endpoint, "", nil
+	}
+
+	apiKey := core.GetEnv(llmBackend.APIKeyEnvVar)
 	if apiKey == "" {
-		return "", "", fmt.Errorf("API key is required for OpenAI-compatible API at %s. Configure llm_backend.api_key_env_var", cfg.LLMBackend.Endpoint)
+		return "", "", fmt.Errorf("API key is required for OpenAI-compatible API at %s. Configure llm_backend.api_key_env_var", llmBackend.Endpoint)
 	}
 
-	return cfg.LLMBackend.Endpoint, apiKey, nil
+	return llmBackend.Endpoint, apiKey, nil
 }
 
 // Name returns the provider name

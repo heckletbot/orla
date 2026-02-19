@@ -1,323 +1,76 @@
-// Package serving implements the Agentic Serving Layer (RFC 5).
+// Package serving implements a minimal programmatic serving layer.
 package serving
 
 import (
 	"context"
 	"fmt"
-	"math"
-	"strings"
-	"time"
 
-	"github.com/dorcha-inc/orla/internal/config"
+	"github.com/dorcha-inc/orla/internal/core"
 	"github.com/dorcha-inc/orla/internal/model"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.uber.org/zap"
 )
 
-// Layer is the concrete implementation of ServingLayer
-type Layer struct {
-	// cfg is the agentic serving configuration
-	cfg *config.AgenticServingConfig
-	// serverManager manages LLM server configurations and providers
-	serverManager *LLMServerManager
-	// contextManager manages shared contexts
-	contextManager *ContextManager
-	// cacheManager manages cache policies
-	cacheManager *CacheManager
-	// workflowExecutor executes workflows
-	workflowExecutor *WorkflowExecutor
-	// agentProfiles maps profile names to their configurations
-	agentProfiles map[string]*config.AgentProfile
+// AgenticLayer is the serving layer that manages LLM backends and executes inference.
+type AgenticLayer struct {
+	llmBackendManager *LLMBackendManager
 }
 
-// ExecuteTaskOptions are the additional options for executing a task
-type ExecuteTaskOptions struct {
-	// MaxTokens is the maximum number of tokens to generate.
+// ExecuteOptions are additional options for executing inference.
+type ExecuteOptions struct {
 	MaxTokens int
-	// Stream is whether to stream the response.
-	Stream bool
+	Stream    bool
 }
 
-// GetAgentProfile returns an agent profile by name
-func (l *Layer) GetAgentProfile(profileName string) (*config.AgentProfile, bool) {
-	profile, exists := l.agentProfiles[profileName]
-	return profile, exists
+// NewAgenticLayer creates a new serving layer.
+func NewAgenticLayer() *AgenticLayer {
+	return &AgenticLayer{
+		llmBackendManager: NewLLMBackendManager(),
+	}
 }
 
-// NewLayer creates a new serving layer. cfg may be nil or empty for a programmatic-only setup.
-func NewLayer(cfg *config.AgenticServingConfig) (*Layer, error) {
-	if cfg == nil {
-		cfg = &config.AgenticServingConfig{}
-	}
-
-	// Create server manager
-	serverManager := NewLLMServerManager(cfg.LLMServers)
-
-	// Create context manager
-	contextManager := NewContextManager()
-
-	// Initialize shared contexts for servers with shared context enabled
-	for _, server := range cfg.LLMServers {
-		if server.Context != nil && server.Context.Shared {
-			syncInterval := server.Context.SyncInterval
-			if syncInterval <= 0 {
-				syncInterval = 100 // Default sync interval
-			}
-			contextManager.GetOrCreateSharedContext(server.Name, syncInterval)
-		}
-	}
-
-	// Create cache policy evaluator and manager
-	evaluator := NewCachePolicyEvaluator(cfg.LLMServers)
-	cacheManager := NewCacheManager(evaluator)
-
-	// Create workflow executor
-	workflowExecutor := NewWorkflowExecutor(cfg.Workflows)
-
-	// Index agent profiles by name
-	agentProfiles := make(map[string]*config.AgentProfile)
-	for _, profile := range cfg.AgentProfiles {
-		agentProfiles[profile.Name] = profile
-	}
-
-	return &Layer{
-		cfg:              cfg,
-		serverManager:    serverManager,
-		contextManager:   contextManager,
-		cacheManager:     cacheManager,
-		workflowExecutor: workflowExecutor,
-		agentProfiles:    agentProfiles,
-	}, nil
+// AddLLMBackend registers an LLM backend by name.
+func (l *AgenticLayer) AddLLMBackend(name string, backend *core.LLMBackend, modelID string) {
+	l.llmBackendManager.AddLLMBackend(name, backend, modelID)
 }
 
-// GetProvider returns a model provider for an agent profile or workflow task
-func (l *Layer) GetProvider(ctx context.Context, profileName string, task *config.WorkflowTask) (model.Provider, error) {
-	// Get agent profile
-	profile, exists := l.agentProfiles[profileName]
-	if !exists {
-		return nil, fmt.Errorf("agent_profile '%s' not found", profileName)
-	}
-
-	// Determine which LLM server to use
-	serverName := profile.LLMServer
-	if task != nil && task.LLMServer != "" {
-		// Task has an LLM server override
-		serverName = task.LLMServer
-	}
-
-	// Get provider from server manager
-	provider, err := l.serverManager.GetProvider(ctx, serverName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get provider for llm_server '%s': %w", serverName, err)
-	}
-
-	zap.L().Debug("Got provider for agent profile",
-		zap.String("profile_name", profileName),
-		zap.String("server_name", serverName))
-
-	return provider, nil
+// GetModelProvider returns the model provider for a named LLM backend.
+func (l *AgenticLayer) GetModelProvider(ctx context.Context, backendName string) (model.Provider, error) {
+	return l.llmBackendManager.GetModelProvider(ctx, backendName)
 }
 
-// StartWorkflow initializes a workflow execution
-func (l *Layer) StartWorkflow(ctx context.Context, workflowName string) (*WorkflowExecution, error) {
-	return l.workflowExecutor.StartWorkflow(ctx, workflowName)
-}
-
-// ExecuteTask executes a single workflow task with the given prompt
-// It handles shared context, cache policies, and returns the response
-func (l *Layer) ExecuteTask(ctx context.Context, execution *WorkflowExecution, taskIndex int, prompt string, options ExecuteTaskOptions) (*model.Response, error) {
-	if taskIndex < 0 || taskIndex >= len(execution.Tasks) {
-		return nil, fmt.Errorf("invalid task index: %d (workflow has %d tasks)", taskIndex, len(execution.Tasks))
-	}
-
-	task := execution.Tasks[taskIndex]
-	profileName := task.AgentProfile
-
-	// Get agent profile to determine the LLM server
-	profile, exists := l.agentProfiles[profileName]
-	if !exists {
-		return nil, fmt.Errorf("agent_profile '%s' not found", profileName)
-	}
-
-	// Determine which LLM server to use
-	serverName := profile.LLMServer
-	if task.LLMServer != "" {
-		serverName = task.LLMServer
-	}
-
-	// Get provider for this task
-	provider, err := l.GetProvider(ctx, profileName, task)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get provider for task %d: %w", taskIndex, err)
-	}
-
-	// Determine the prompt to use
-	taskPrompt := prompt
-	if task.Prompt != "" {
-		taskPrompt = task.Prompt
-	}
-
-	// Build messages for the chat request
-	var messages []model.Message
-
-	// If task uses context, include accumulated context from previous tasks
-	if task.UseContext && len(execution.Context) > 0 {
-		messages = append(messages, execution.Context...)
-	}
-
-	// Check if this server has shared context enabled
-	serverCfg, err := l.serverManager.GetServerConfig(serverName)
-	if err != nil {
-		// NOTE(jadidbourbaki): this is not a blocking error, this can actually happen if we are not
-		// sharing context with the daemon, in which case we just continue without shared context
-		zap.L().Debug("Failed to get server config for server, continuing without shared context", zap.String("server_name", serverName))
-	}
-
-	if serverCfg != nil && serverCfg.Context != nil && serverCfg.Context.Shared {
-		// Get shared context and include it
-		sharedCtx := l.contextManager.GetSharedContext(serverName)
-		if sharedCtx != nil {
-			sharedMessages := sharedCtx.GetMessages()
-			// Only add shared context if task doesn't already have context from execution
-			if !task.UseContext || len(execution.Context) == 0 {
-				messages = append(messages, sharedMessages...)
-			}
-		}
-	}
-
-	// Add the user message with the prompt
-	userMsg := model.Message{
-		Role:    model.MessageRoleUser,
-		Content: taskPrompt,
-	}
-	messages = append(messages, userMsg)
-
-	// Update execution state to running
-	execution.State = WorkflowExecutionStateRunning
-
-	var response *model.Response
-	var streamCh <-chan model.StreamEvent
-	var chatErr error
-	// Execute inference (non-streaming for workflow tasks)
+// Execute runs a single inference call against the named LLM backend.
+// Streaming is not yet supported, so the layer always requests a full response.
+func (l *AgenticLayer) Execute(ctx context.Context, serverName string, messages []model.Message, tools []*mcp.Tool, options ExecuteOptions) (*model.Response, error) {
 	if options.Stream {
-		response, streamCh, chatErr = provider.Chat(ctx, messages, nil, true, options.MaxTokens)
-	} else {
-		response, _, chatErr = provider.Chat(ctx, messages, nil, false, options.MaxTokens)
+		return nil, fmt.Errorf("streaming is not yet supported")
 	}
 
-	if chatErr != nil {
-		return nil, fmt.Errorf("inference failed for task %d: %w", taskIndex, chatErr)
-	}
-
-	if options.Stream && streamCh != nil {
-		response.Metrics = &model.ResponseMetrics{
-			TTFTMs: -1,
-			TPOTMs: -1,
-		}
-
-		responseStart := time.Now()
-		contentReceived := false
-		var streamedContent strings.Builder
-		contentChunkCount := 0
-		for ev := range streamCh {
-			if contentEv, ok := ev.(*model.ContentEvent); ok {
-				if contentEv.Content != "" {
-					if !contentReceived {
-						response.Metrics.TTFTMs = time.Since(responseStart).Milliseconds()
-					}
-					contentReceived = true
-					contentChunkCount++
-					streamedContent.WriteString(contentEv.Content)
-				}
-			}
-		}
-		response.Content = streamedContent.String()
-
-		if contentChunkCount > 0 {
-			decodeDurationMs := time.Since(responseStart).Milliseconds()
-			// do floating point division and round to nearest integer
-			response.Metrics.TPOTMs = int64(math.Round(float64(decodeDurationMs) / float64(contentChunkCount)))
-		}
-	}
-
-	// Update accumulated context with user message and response
-	execution.Context = append(execution.Context, userMsg)
-	if response.Content != "" {
-		assistantMsg := model.Message{
-			Role:    model.MessageRoleAssistant,
-			Content: response.Content,
-		}
-		execution.Context = append(execution.Context, assistantMsg)
-	}
-
-	// Update shared context if enabled
-	if serverCfg != nil && serverCfg.Context != nil && serverCfg.Context.Shared {
-		sharedCtx := l.contextManager.GetOrCreateSharedContext(serverName, serverCfg.Context.SyncInterval)
-		sharedCtx.AppendMessage(userMsg)
-		if response.Content != "" {
-			sharedCtx.AppendMessage(model.Message{
-				Role:    model.MessageRoleAssistant,
-				Content: response.Content,
-			})
-		}
-	}
-
-	// Evaluate cache policy
-	isFinalTask := taskIndex == len(execution.Tasks)-1
-
-	// Use options.MaxTokens if available
-	var turnSize int
-	if options.MaxTokens > 0 {
-		turnSize = options.MaxTokens
-	} else {
-		// Fallback to character-based estimate if maxTokens not available
-		// Rough approximation: ~4 characters per token
-		turnSize = (len(taskPrompt) + len(response.Content)) / 4
-	}
-
-	// Get actual memory pressure from SGLang for flush_under_pressure policy
-	memoryPressure := l.cacheManager.GetMemoryPressure(ctx, l.serverManager, serverName)
-
-	shouldFlush, err := l.cacheManager.ShouldFlush(ctx, serverName, turnSize, memoryPressure, isFinalTask, execution.WorkflowName)
+	provider, err := l.llmBackendManager.GetModelProvider(ctx, serverName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to evaluate cache policy: %w", err)
+		return nil, fmt.Errorf("failed to get provider for server '%s': %w", serverName, err)
 	}
 
-	// Actually flush the cache
-	if shouldFlush {
-		flushErr := l.cacheManager.FlushCache(ctx, l.serverManager, serverName)
-		if flushErr != nil {
-			// Log warning but don't fail the task - cache flush is best-effort
-			// Under concurrent load, SGLang may not be able to flush immediately
-			zap.L().Warn("Cache flush failed, continuing without flush",
-				zap.String("server_name", serverName),
-				zap.String("workflow", execution.WorkflowName),
-				zap.Error(flushErr))
-			// Continue execution - the cache will be flushed on next opportunity
-		}
+	// Request non-streaming so we get a complete response; stream channel is not exposed by the layer yet.
+	// TODO(jadidbourbaki): Add streaming support to the layer.
+	response, _, err := provider.Chat(ctx, messages, tools, false, options.MaxTokens)
+	if err != nil {
+		return nil, fmt.Errorf("inference failed on server '%s': %w", serverName, err)
 	}
 
-	// Advance task index
-	execution.CurrentTaskIndex = taskIndex + 1
-	if execution.CurrentTaskIndex >= len(execution.Tasks) {
-		execution.State = WorkflowExecutionStateCompleted
-	}
-
-	zap.L().Debug("Executed workflow task",
-		zap.String("workflow_name", execution.WorkflowName),
-		zap.String("execution_id", execution.ExecutionID),
-		zap.Int("task_index", taskIndex),
-		zap.String("agent_profile", profileName),
+	zap.L().Debug("Executed inference",
+		zap.String("server", serverName),
 		zap.Int("response_length", len(response.Content)))
 
 	return response, nil
 }
 
-// GetSharedContext returns shared context for a given LLM server
-func (l *Layer) GetSharedContext(serverName string) *SharedContext {
-	return l.contextManager.GetSharedContext(serverName)
+// GetLLMBackendHealth returns the health status of a named LLM backend.
+func (l *AgenticLayer) GetLLMBackendHealth(ctx context.Context, serverName string) (HealthStatus, error) {
+	return l.llmBackendManager.GetHealthStatus(ctx, serverName)
 }
 
-// GetExecution returns a workflow execution by ID
-func (l *Layer) GetExecution(executionID string) (*WorkflowExecution, error) {
-	return l.workflowExecutor.GetExecution(executionID)
+// ListLLMBackends returns all registered LLM backend names.
+func (l *AgenticLayer) ListLLMBackends() []string {
+	return l.llmBackendManager.ListLLMBackends()
 }

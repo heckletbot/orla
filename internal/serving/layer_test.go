@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dorcha-inc/orla/internal/config"
 	"github.com/dorcha-inc/orla/internal/core"
 	"github.com/dorcha-inc/orla/internal/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -12,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockProvider is a test implementation of model.Provider
 type mockProvider struct {
 	name          string
 	lastMaxTokens *int
@@ -22,7 +20,7 @@ func (m *mockProvider) Name() string {
 	return m.name
 }
 
-func (m *mockProvider) Chat(ctx context.Context, messages []model.Message, tools []*mcp.Tool, stream bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
+func (m *mockProvider) Chat(_ context.Context, _ []model.Message, _ []*mcp.Tool, _ bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
 	if maxTokens != 0 {
 		m.lastMaxTokens = &maxTokens
 	} else {
@@ -33,161 +31,69 @@ func (m *mockProvider) Chat(ctx context.Context, messages []model.Message, tools
 	}, nil, nil
 }
 
-func (m *mockProvider) EnsureReady(ctx context.Context) error {
+func (m *mockProvider) EnsureReady(_ context.Context) error {
 	return nil
 }
 
-func TestLayer_ExecuteTask_WithMaxTokens(t *testing.T) {
-	maxTokens := 42
-	cfg := &config.AgenticServingConfig{
-		LLMServers: []*config.LLMServerConfig{
-			{
-				Name: "test-server",
-				Backend: &core.LLMBackend{
-					Type:     core.LLMInferenceAPITypeOllama,
-					Endpoint: "http://localhost:11434",
-				},
-				Model: "test-model",
-			},
-		},
-		AgentProfiles: []*config.AgentProfile{
-			{
-				Name:      "test-profile",
-				LLMServer: "test-server",
-			},
-		},
-		Workflows: []*config.Workflow{
-			{
-				Name: "test-workflow",
-				Tasks: []*config.WorkflowTask{
-					{
-						AgentProfile: "test-profile",
-					},
-				},
-			},
-		},
-	}
+func TestLayer_NewLayer(t *testing.T) {
+	layer := NewAgenticLayer()
+	require.NotNil(t, layer)
+	assert.Empty(t, layer.ListLLMBackends())
+}
 
-	layer, err := NewLayer(cfg)
-	require.NoError(t, err)
+func TestLayer_AddServer(t *testing.T) {
+	layer := NewAgenticLayer()
+	layer.AddLLMBackend("test-server", &core.LLMBackend{
+		Type:     core.LLMInferenceAPITypeOllama,
+		Endpoint: "http://localhost:11434",
+	}, "ollama:test-model")
+	assert.Contains(t, layer.ListLLMBackends(), "test-server")
+}
 
-	// Replace the provider with a mock (providers are stored by server name)
+func TestLayer_Execute_WithMaxTokens(t *testing.T) {
+	layer := NewAgenticLayer()
+	layer.AddLLMBackend("test-server", &core.LLMBackend{
+		Type:     core.LLMInferenceAPITypeOllama,
+		Endpoint: "http://localhost:11434",
+	}, "ollama:test-model")
+
 	mock := &mockProvider{name: "mock"}
-	layer.serverManager.mu.Lock()
-	layer.serverManager.providers["test-server"] = mock
-	layer.serverManager.mu.Unlock()
+	layer.llmBackendManager.mu.Lock()
+	layer.llmBackendManager.providers["test-server"] = mock
+	layer.llmBackendManager.mu.Unlock()
 
-	execution, err := layer.StartWorkflow(context.Background(), "test-workflow")
+	response, err := layer.Execute(context.Background(), "test-server", []model.Message{
+		{Role: model.MessageRoleUser, Content: "test prompt"},
+	}, nil, ExecuteOptions{MaxTokens: 42})
 	require.NoError(t, err)
-
-	response, err := layer.ExecuteTask(context.Background(), execution, 0, "test prompt", ExecuteTaskOptions{MaxTokens: maxTokens})
-	require.NoError(t, err)
-	assert.NotNil(t, response)
 	assert.Equal(t, "test response", response.Content)
-
-	// Verify that maxTokens was passed to the provider
 	assert.NotNil(t, mock.lastMaxTokens)
-	assert.Equal(t, maxTokens, *mock.lastMaxTokens)
+	assert.Equal(t, 42, *mock.lastMaxTokens)
 }
 
-func TestLayer_ExecuteTask_WithoutMaxTokens(t *testing.T) {
-	cfg := &config.AgenticServingConfig{
-		LLMServers: []*config.LLMServerConfig{
-			{
-				Name: "test-server",
-				Backend: &core.LLMBackend{
-					Type:     core.LLMInferenceAPITypeOllama,
-					Endpoint: "http://localhost:11434",
-				},
-				Model: "test-model",
-			},
-		},
-		AgentProfiles: []*config.AgentProfile{
-			{
-				Name:      "test-profile",
-				LLMServer: "test-server",
-			},
-		},
-		Workflows: []*config.Workflow{
-			{
-				Name: "test-workflow",
-				Tasks: []*config.WorkflowTask{
-					{
-						AgentProfile: "test-profile",
-					},
-				},
-			},
-		},
-	}
+func TestLayer_Execute_WithoutMaxTokens(t *testing.T) {
+	layer := NewAgenticLayer()
+	layer.AddLLMBackend("test-server", &core.LLMBackend{
+		Type:     core.LLMInferenceAPITypeOllama,
+		Endpoint: "http://localhost:11434",
+	}, "ollama:test-model")
 
-	layer, err := NewLayer(cfg)
-	require.NoError(t, err)
-
-	// Replace the provider with a mock (providers are stored by server name)
 	mock := &mockProvider{name: "mock"}
-	layer.serverManager.mu.Lock()
-	layer.serverManager.providers["test-server"] = mock
-	layer.serverManager.mu.Unlock()
+	layer.llmBackendManager.mu.Lock()
+	layer.llmBackendManager.providers["test-server"] = mock
+	layer.llmBackendManager.mu.Unlock()
 
-	execution, err := layer.StartWorkflow(context.Background(), "test-workflow")
+	response, err := layer.Execute(context.Background(), "test-server", []model.Message{
+		{Role: model.MessageRoleUser, Content: "test prompt"},
+	}, nil, ExecuteOptions{})
 	require.NoError(t, err)
-
-	response, err := layer.ExecuteTask(context.Background(), execution, 0, "test prompt", ExecuteTaskOptions{})
-	require.NoError(t, err)
-	assert.NotNil(t, response)
 	assert.Equal(t, "test response", response.Content)
-
-	// Verify that maxTokens was nil when not provided
 	assert.Nil(t, mock.lastMaxTokens)
 }
 
-func TestLayer_ExecuteTask_WithMaxTokensZero(t *testing.T) {
-	maxTokens := 0
-	cfg := &config.AgenticServingConfig{
-		LLMServers: []*config.LLMServerConfig{
-			{
-				Name: "test-server",
-				Backend: &core.LLMBackend{
-					Type:     core.LLMInferenceAPITypeOllama,
-					Endpoint: "http://localhost:11434",
-				},
-				Model: "test-model",
-			},
-		},
-		AgentProfiles: []*config.AgentProfile{
-			{
-				Name:      "test-profile",
-				LLMServer: "test-server",
-			},
-		},
-		Workflows: []*config.Workflow{
-			{
-				Name: "test-workflow",
-				Tasks: []*config.WorkflowTask{
-					{
-						AgentProfile: "test-profile",
-					},
-				},
-			},
-		},
-	}
-
-	layer, err := NewLayer(cfg)
-	require.NoError(t, err)
-
-	// Replace the provider with a mock (providers are stored by server name)
-	mock := &mockProvider{name: "mock"}
-	layer.serverManager.mu.Lock()
-	layer.serverManager.providers["test-server"] = mock
-	layer.serverManager.mu.Unlock()
-
-	execution, err := layer.StartWorkflow(context.Background(), "test-workflow")
-	require.NoError(t, err)
-
-	response, err := layer.ExecuteTask(context.Background(), execution, 0, "test prompt", ExecuteTaskOptions{MaxTokens: maxTokens})
-	require.NoError(t, err)
-	assert.NotNil(t, response)
-
-	// When MaxTokens is 0, layer passes nil to provider (0 means no limit)
-	assert.Nil(t, mock.lastMaxTokens)
+func TestLayer_Execute_ServerNotFound(t *testing.T) {
+	layer := NewAgenticLayer()
+	_, err := layer.Execute(context.Background(), "nonexistent", nil, nil, ExecuteOptions{})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
 }

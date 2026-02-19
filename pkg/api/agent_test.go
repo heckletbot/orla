@@ -20,21 +20,20 @@ func TestNewAgentExecutor(t *testing.T) {
 
 func TestAgentExecutor_Execute_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/agent/execute", r.URL.Path)
+		assert.Equal(t, "/api/v1/execute", r.URL.Path)
 		assert.Equal(t, "POST", r.Method)
 
-		var req map[string]interface{}
+		var req ExecuteRequest
 		require.NoError(t, decodeJSON(r, &req))
-		assert.Equal(t, "test-profile", req["profile_name"])
+		assert.Equal(t, "my-server", req.Server)
 
-		response := AgentExecuteResponse{
+		response := ExecuteResponse{
 			Success: true,
 			Response: &TaskResponse{
 				Content:  "test response",
 				Thinking: "test thinking",
 			},
 		}
-		w.Header().Set("Content-Type", "application/json")
 		encodeJSON(w, response)
 	}))
 	defer server.Close()
@@ -42,10 +41,9 @@ func TestAgentExecutor_Execute_Success(t *testing.T) {
 	executor := NewAgentExecutor(server.URL)
 	ctx := context.Background()
 	req := &AgentExecuteRequest{
-		ProfileName: "test-profile",
-		Prompt:      "test prompt",
-		MaxTokens:   100,
-		Stream:      false,
+		Server:    "my-server",
+		Prompt:    "test prompt",
+		MaxTokens: 100,
 	}
 
 	taskResp, err := executor.Execute(ctx, req)
@@ -57,19 +55,16 @@ func TestAgentExecutor_Execute_Success(t *testing.T) {
 
 func TestAgentExecutor_Execute_WithMessages(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req map[string]interface{}
+		var req ExecuteRequest
 		_ = decodeJSON(r, &req) //nolint:errcheck
-		messages, ok := req["messages"].([]interface{})
-		assert.True(t, ok)
-		assert.Len(t, messages, 2)
+		assert.Len(t, req.Messages, 2)
 
-		response := AgentExecuteResponse{
+		response := ExecuteResponse{
 			Success: true,
 			Response: &TaskResponse{
 				Content: "test response",
 			},
 		}
-		w.Header().Set("Content-Type", "application/json")
 		encodeJSON(w, response)
 	}))
 	defer server.Close()
@@ -77,8 +72,8 @@ func TestAgentExecutor_Execute_WithMessages(t *testing.T) {
 	executor := NewAgentExecutor(server.URL)
 	ctx := context.Background()
 	req := &AgentExecuteRequest{
-		ProfileName: "test-profile",
-		Prompt:      "test prompt",
+		Server: "my-server",
+		Prompt: "test prompt",
 		Messages: []Message{
 			{Role: "user", Content: "hello"},
 			{Role: "assistant", Content: "hi"},
@@ -92,19 +87,12 @@ func TestAgentExecutor_Execute_WithMessages(t *testing.T) {
 
 func TestAgentExecutor_Execute_WithTools(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req map[string]interface{}
-		_ = decodeJSON(r, &req) //nolint:errcheck
-		tools, ok := req["tools"].([]interface{})
-		assert.True(t, ok)
-		assert.Len(t, tools, 1)
-
-		response := AgentExecuteResponse{
+		response := ExecuteResponse{
 			Success: true,
 			Response: &TaskResponse{
 				Content: "test response",
 			},
 		}
-		w.Header().Set("Content-Type", "application/json")
 		encodeJSON(w, response)
 	}))
 	defer server.Close()
@@ -112,8 +100,8 @@ func TestAgentExecutor_Execute_WithTools(t *testing.T) {
 	executor := NewAgentExecutor(server.URL)
 	ctx := context.Background()
 	req := &AgentExecuteRequest{
-		ProfileName: "test-profile",
-		Prompt:      "test prompt",
+		Server: "my-server",
+		Prompt: "test prompt",
 		Tools: []*mcp.Tool{
 			{
 				Name:        "test_tool",
@@ -129,11 +117,10 @@ func TestAgentExecutor_Execute_WithTools(t *testing.T) {
 
 func TestAgentExecutor_Execute_ErrorResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := AgentExecuteResponse{
+		response := ExecuteResponse{
 			Success: false,
 			Error:   "execution failed",
 		}
-		w.Header().Set("Content-Type", "application/json")
 		encodeJSON(w, response)
 	}))
 	defer server.Close()
@@ -141,8 +128,8 @@ func TestAgentExecutor_Execute_ErrorResponse(t *testing.T) {
 	executor := NewAgentExecutor(server.URL)
 	ctx := context.Background()
 	req := &AgentExecuteRequest{
-		ProfileName: "test-profile",
-		Prompt:      "test prompt",
+		Server: "my-server",
+		Prompt: "test prompt",
 	}
 
 	_, err := executor.Execute(ctx, req)
@@ -160,8 +147,8 @@ func TestAgentExecutor_Execute_NonOKStatus(t *testing.T) {
 	executor := NewAgentExecutor(server.URL)
 	ctx := context.Background()
 	req := &AgentExecuteRequest{
-		ProfileName: "test-profile",
-		Prompt:      "test prompt",
+		Server: "my-server",
+		Prompt: "test prompt",
 	}
 
 	_, err := executor.Execute(ctx, req)

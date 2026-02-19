@@ -1,12 +1,8 @@
-// Package api provides the HTTP client for communicating with the Agentic Serving Layer daemon (RFC 5).
 package api
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
@@ -15,9 +11,7 @@ import (
 
 // Client is the HTTP client for communicating with the daemon
 type Client struct {
-	// baseURL is the base URL of the daemon
-	baseURL string
-	// httpClient is the HTTP client
+	baseURL    string
 	httpClient *http.Client
 }
 
@@ -50,45 +44,4 @@ func (c *Client) Health(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-// StartWorkflow starts a workflow execution
-func (c *Client) StartWorkflow(ctx context.Context, workflowName string) (*WorkflowStartResponse, error) {
-	url := fmt.Sprintf("%s/api/v1/workflow/start", c.baseURL)
-
-	req := WorkflowStartRequest{
-		WorkflowName: workflowName,
-	}
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create workflow start request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	httpResp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to start workflow: %w", err)
-	}
-	defer core.LogDeferredError(httpResp.Body.Close)
-
-	if httpResp.StatusCode != http.StatusOK {
-		bodyBytes, err := io.ReadAll(httpResp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("workflow start returned status %d: failed to read body: %w", httpResp.StatusCode, err)
-		}
-		return nil, fmt.Errorf("workflow start returned status %d: %s", httpResp.StatusCode, string(bodyBytes))
-	}
-
-	var workflowResp WorkflowStartResponse
-	if err := json.NewDecoder(httpResp.Body).Decode(&workflowResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return &workflowResp, nil
 }

@@ -1,17 +1,12 @@
-// Package orla provides a public Go client library for the Orla Agentic Serving Layer daemon API (RFC 5).
-//
-// This package enables external code to interact with the Orla daemon for:
-// - Workflow execution and coordination
-// - Shared context management
-// - Multi-agent experiments
+// Package orla provides a public Go client library for the Orla serving layer daemon.
 //
 // Example usage:
 //
-//	client := api.NewClient("http://localhost:8081")
-//	execID, err := client.StartWorkflow(ctx, "story_finishing_game")
-//	task, taskIndex, complete, err := client.GetNextTask(ctx, execID)
-//	response, err := client.ExecuteTask(ctx, execID, taskIndex, prompt, &api.ExecuteTaskOptions{Stream: true})
-//	err := client.CompleteTask(ctx, execID, taskIndex, response)
+//	client := orla.NewClient("http://localhost:8081")
+//	resp, err := client.Execute(ctx, &orla.ExecuteRequest{
+//	    Server: "my-server",
+//	    Prompt: "What is the weather in SF?",
+//	})
 package orla
 
 import (
@@ -58,149 +53,30 @@ func (c *Client) Health(ctx context.Context) error {
 	return nil
 }
 
-// StartWorkflowRequest represents a workflow start request
-type StartWorkflowRequest struct {
-	WorkflowName string `json:"workflow_name"`
+// ExecuteRequest represents a request to execute inference on a named server.
+type ExecuteRequest struct {
+	Server    string      `json:"server"`
+	Prompt    string      `json:"prompt,omitempty"`
+	Messages  []Message   `json:"messages,omitempty"`
+	Tools     interface{} `json:"tools,omitempty"` // MCP tools ([]*mcp.Tool) or any JSON-serializable tool list
+	MaxTokens int         `json:"max_tokens,omitempty"`
+	Stream    bool        `json:"stream,omitempty"`
 }
 
-// StartWorkflowResponse represents a workflow start response
-type StartWorkflowResponse struct {
-	ExecutionID string `json:"execution_id"`
-	Error       string `json:"error,omitempty"`
-}
-
-// StartWorkflow starts a workflow execution on the daemon
-func (c *Client) StartWorkflow(ctx context.Context, workflowName string) (string, error) {
-	url := fmt.Sprintf("%s/api/v1/workflow/start", c.baseURL)
-
-	req := StartWorkflowRequest{
-		WorkflowName: workflowName,
-	}
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("failed to create workflow start request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	httpResp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return "", fmt.Errorf("failed to start workflow: %w", err)
-	}
-	defer LogDeferredError(httpResp.Body.Close)
-
-	if httpResp.StatusCode != http.StatusOK {
-		bodyBytes, err := io.ReadAll(httpResp.Body)
-		if err != nil {
-			return "", fmt.Errorf("failed to read response body: %w", err)
-		}
-		return "", fmt.Errorf("workflow start returned status %d: %s", httpResp.StatusCode, string(bodyBytes))
-	}
-
-	var workflowResp StartWorkflowResponse
-	if err := json.NewDecoder(httpResp.Body).Decode(&workflowResp); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if workflowResp.Error != "" {
-		return "", fmt.Errorf("workflow start failed: %s", workflowResp.Error)
-	}
-
-	return workflowResp.ExecutionID, nil
-}
-
-// GetNextTaskResponse represents the response from getting the next task
-type GetNextTaskResponse struct {
-	Task      *WorkflowTask `json:"task"`
-	TaskIndex int           `json:"task_index"`
-	Complete  bool          `json:"complete"`
-	LLMServer string        `json:"llm_server,omitempty"` // Resolved server name from daemon
-	Error     string        `json:"error,omitempty"`
-}
-
-// WorkflowTask represents a workflow task
-// This matches the structure returned by the daemon API
-type WorkflowTask struct {
-	// AgentProfile is the name of the agent profile to use for this task
-	AgentProfile string `json:"agent_profile"`
-	// LLMServer is an optional override for the LLM server configuration
-	LLMServer string `json:"llm_server,omitempty"`
-	// Prompt is the prompt or prompt template for this task
-	Prompt string `json:"prompt,omitempty"`
-	// UseContext indicates whether to use previous task outputs as context
-	UseContext bool `json:"use_context,omitempty"`
-}
-
-// GetNextTask retrieves the next task to execute from a workflow
-// Returns the task, task index, completion status, and resolved LLM server name
-func (c *Client) GetNextTask(ctx context.Context, executionID string) (*WorkflowTask, int, bool, string, error) {
-	url := fmt.Sprintf("%s/api/v1/workflow/task/next?execution_id=%s", c.baseURL, executionID)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, 0, false, "", fmt.Errorf("failed to create get next task request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, 0, false, "", fmt.Errorf("get next task request failed: %w", err)
-	}
-	defer LogDeferredError(resp.Body.Close)
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, 0, false, "", fmt.Errorf("failed to read response body: %w", err)
-		}
-		return nil, 0, false, "", fmt.Errorf("get next task failed with status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	var taskResp GetNextTaskResponse
-	if err := json.NewDecoder(resp.Body).Decode(&taskResp); err != nil {
-		return nil, 0, false, "", fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if taskResp.Error != "" {
-		return nil, 0, false, "", fmt.Errorf("get next task failed: %s", taskResp.Error)
-	}
-
-	return taskResp.Task, taskResp.TaskIndex, taskResp.Complete, taskResp.LLMServer, nil
-}
-
-// ExecuteTaskOptions are options for executing a task (mirrors serving.ExecuteTaskOptions).
-type ExecuteTaskOptions struct {
-	MaxTokens int  // Maximum tokens to generate; 0 = omit
-	Stream    bool // If true, server streams and returns response.metrics (ttft_ms, tpot_ms)
-}
-
-// ExecuteTaskRequest represents a task execution request
-type ExecuteTaskRequest struct {
-	ExecutionID string                     `json:"execution_id"`
-	TaskIndex   int                        `json:"task_index"`
-	Prompt      string                     `json:"prompt"`
-	Options     *ExecuteTaskRequestOptions `json:"options,omitempty"` // Optional; mirrors ExecuteTaskOptions
-}
-
-// ExecuteTaskRequestOptions are the JSON wire form of ExecuteTaskOptions.
-type ExecuteTaskRequestOptions struct {
-	MaxTokens *int `json:"max_tokens,omitempty"`
-	Stream    bool `json:"stream,omitempty"`
-}
-
-// ExecuteTaskResponse represents a task execution response
-type ExecuteTaskResponse struct {
+// ExecuteResponse represents the response from an execute call.
+type ExecuteResponse struct {
 	Success  bool          `json:"success"`
 	Response *TaskResponse `json:"response,omitempty"`
 	Error    string        `json:"error,omitempty"`
 }
 
-// TaskResponse represents the response from a task execution.
-// Matches the daemon's model.Response; Metrics is set when the task was executed with streaming.
+// Message represents a chat message.
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// TaskResponse represents the response from inference.
 type TaskResponse struct {
 	Content     string               `json:"content"`
 	Thinking    string               `json:"thinking,omitempty"`
@@ -209,43 +85,30 @@ type TaskResponse struct {
 	Metrics     *TaskResponseMetrics `json:"metrics,omitempty"`
 }
 
-// TaskResponseMetrics holds timing metrics from streaming execution (TTFT, TPOT).
+// TaskResponseMetrics holds timing metrics from streaming execution.
 type TaskResponseMetrics struct {
-	TTFTMs int64 `json:"ttft_ms,omitempty"` // Time to first token (ms)
-	TPOTMs int64 `json:"tpot_ms,omitempty"` // Time per output token (ms)
+	TTFTMs int64 `json:"ttft_ms,omitempty"`
+	TPOTMs int64 `json:"tpot_ms,omitempty"`
 }
 
-// ExecuteTask executes a workflow task on the daemon.
-// options may be nil for defaults.
-func (c *Client) ExecuteTask(ctx context.Context, executionID string, taskIndex int, prompt string, options *ExecuteTaskOptions) (*TaskResponse, error) {
-	url := fmt.Sprintf("%s/api/v1/workflow/task/execute", c.baseURL)
+// Execute runs inference on the named server via the daemon.
+func (c *Client) Execute(ctx context.Context, req *ExecuteRequest) (*TaskResponse, error) {
+	url := fmt.Sprintf("%s/api/v1/execute", c.baseURL)
 
-	reqBody := ExecuteTaskRequest{
-		ExecutionID: executionID,
-		TaskIndex:   taskIndex,
-		Prompt:      prompt,
-	}
-	if options != nil && (options.MaxTokens > 0 || options.Stream) {
-		reqBody.Options = &ExecuteTaskRequestOptions{Stream: options.Stream}
-		if options.MaxTokens > 0 {
-			reqBody.Options.MaxTokens = &options.MaxTokens
-		}
-	}
-
-	body, err := json.Marshal(reqBody)
+	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create execute task request: %w", err)
+		return nil, fmt.Errorf("failed to create execute request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("execute task request failed: %w", err)
+		return nil, fmt.Errorf("execute request failed: %w", err)
 	}
 	defer LogDeferredError(httpResp.Body.Close)
 
@@ -254,182 +117,17 @@ func (c *Client) ExecuteTask(ctx context.Context, executionID string, taskIndex 
 		if err != nil {
 			return nil, fmt.Errorf("failed to read response body: %w", err)
 		}
-		return nil, fmt.Errorf("execute task failed with status %d: %s", httpResp.StatusCode, string(bodyBytes))
+		return nil, fmt.Errorf("execute failed with status %d: %s", httpResp.StatusCode, string(bodyBytes))
 	}
 
-	var execResp ExecuteTaskResponse
+	var execResp ExecuteResponse
 	if err := json.NewDecoder(httpResp.Body).Decode(&execResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
 	if !execResp.Success {
-		return nil, fmt.Errorf("task execution failed: %s", execResp.Error)
+		return nil, fmt.Errorf("execution failed: %s", execResp.Error)
 	}
 
 	return execResp.Response, nil
-}
-
-// CompleteTaskRequest represents a task completion request
-type CompleteTaskRequest struct {
-	ExecutionID string        `json:"execution_id"`
-	TaskIndex   int           `json:"task_index"`
-	Response    *TaskResponse `json:"response"`
-}
-
-// CompleteTaskResponse represents a task completion response
-type CompleteTaskResponse struct {
-	Success bool   `json:"success"`
-	Error   string `json:"error,omitempty"`
-}
-
-// CompleteTask marks a task as complete and reports the response to the daemon
-func (c *Client) CompleteTask(ctx context.Context, executionID string, taskIndex int, response *TaskResponse) error {
-	url := fmt.Sprintf("%s/api/v1/workflow/task/complete", c.baseURL)
-
-	reqBody := CompleteTaskRequest{
-		ExecutionID: executionID,
-		TaskIndex:   taskIndex,
-		Response:    response,
-	}
-
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("failed to create complete task request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	httpResp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("complete task request failed: %w", err)
-	}
-	defer LogDeferredError(httpResp.Body.Close)
-
-	if httpResp.StatusCode != http.StatusOK {
-		bodyBytes, err := io.ReadAll(httpResp.Body)
-		if err != nil {
-			return fmt.Errorf("failed to read response body: %w", err)
-		}
-		return fmt.Errorf("complete task failed with status %d: %s", httpResp.StatusCode, string(bodyBytes))
-	}
-
-	var completeResp CompleteTaskResponse
-	if err := json.NewDecoder(httpResp.Body).Decode(&completeResp); err != nil {
-		return fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if !completeResp.Success {
-		return fmt.Errorf("complete task failed: %s", completeResp.Error)
-	}
-
-	return nil
-}
-
-// GetContextResponse represents the response from getting context
-type GetContextResponse struct {
-	Messages []Message `json:"messages"`
-	Error    string    `json:"error,omitempty"`
-}
-
-// Message represents a chat message (public API version)
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-// GetContext retrieves shared context from the daemon for a given LLM server
-func (c *Client) GetContext(ctx context.Context, serverName string) ([]Message, error) {
-	url := fmt.Sprintf("%s/api/v1/context/%s", c.baseURL, serverName)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create get context request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("get context request failed: %w", err)
-	}
-	defer LogDeferredError(resp.Body.Close)
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read response body: %w", err)
-		}
-		return nil, fmt.Errorf("get context failed with status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	var contextResp GetContextResponse
-	if err := json.NewDecoder(resp.Body).Decode(&contextResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if contextResp.Error != "" {
-		return nil, fmt.Errorf("get context failed: %s", contextResp.Error)
-	}
-
-	return contextResp.Messages, nil
-}
-
-// SyncContextRequest represents a context sync request
-type SyncContextRequest struct {
-	ServerName string    `json:"server_name"`
-	Messages   []Message `json:"messages"`
-}
-
-// SyncContextResponse represents a context sync response
-type SyncContextResponse struct {
-	Success bool   `json:"success"`
-	Error   string `json:"error,omitempty"`
-}
-
-// SyncContext syncs local context with the daemon
-func (c *Client) SyncContext(ctx context.Context, serverName string, messages []Message) error {
-	url := fmt.Sprintf("%s/api/v1/context/sync", c.baseURL)
-
-	reqBody := SyncContextRequest{
-		ServerName: serverName,
-		Messages:   messages,
-	}
-
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("failed to create context sync request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	httpResp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("context sync request failed: %w", err)
-	}
-	defer LogDeferredError(httpResp.Body.Close)
-
-	if httpResp.StatusCode != http.StatusOK {
-		bodyBytes, err := io.ReadAll(httpResp.Body)
-		if err != nil {
-			return fmt.Errorf("failed to read response body: %w", err)
-		}
-		return fmt.Errorf("context sync failed with status %d: %s", httpResp.StatusCode, string(bodyBytes))
-	}
-
-	var syncResp SyncContextResponse
-	if err := json.NewDecoder(httpResp.Body).Decode(&syncResp); err != nil {
-		return fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if !syncResp.Success {
-		return fmt.Errorf("context sync failed: %s", syncResp.Error)
-	}
-
-	return nil
 }

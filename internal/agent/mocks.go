@@ -8,29 +8,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// mockMCPClient is a mock implementation of MCPClient for testing
-// This can be used by both agent_test.go and loop_test.go
-type mockMCPClient struct {
-	tools      []*mcp.Tool
-	callResult *mcp.CallToolResult
-	callError  error
-	listError  error
-}
-
-func (m *mockMCPClient) ListTools(ctx context.Context) ([]*mcp.Tool, error) {
-	if m.listError != nil {
-		return nil, m.listError
-	}
-	return m.tools, nil
-}
-
-func (m *mockMCPClient) CallTool(ctx context.Context, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {
-	if m.callError != nil {
-		return nil, m.callError
-	}
-	return m.callResult, nil
-}
-
 // mockProvider is a mock implementation of model.Provider for testing
 // Supports both function-based (for flexibility) and field-based (for simplicity) approaches
 type mockProvider struct {

@@ -37,11 +37,60 @@ func NewExecutor(cfg *config.OrlaConfig) (*Executor, error) {
 	}, nil
 }
 
+// StreamHandler is a function that handles streaming events.
+type StreamHandler func(event model.StreamEvent) error
+
+// Execute runs one model call with the given prompt and optional message history,
+// then returns the response. If stream is true and streamHandler is set, events
+// are delivered to the handler. No tools are passed to the model.
+func (e *Executor) Execute(ctx context.Context, prompt string, messages []model.Message, stream bool, streamHandler StreamHandler) (*model.Response, error) {
+	if stream && streamHandler == nil {
+		return nil, fmt.Errorf("stream handler is required when streaming is enabled")
+	}
+
+	conversation := make([]model.Message, len(messages))
+	copy(conversation, messages)
+	if prompt != "" {
+		conversation = append(conversation, model.Message{
+			Role:    model.MessageRoleUser,
+			Content: prompt,
+		})
+	}
+
+	zap.L().Debug("Agent execute",
+		zap.String("prompt", prompt),
+		zap.Int("message_count", len(conversation)))
+
+	tui.Progress("Processing request")
+
+	response, streamCh, err := e.provider.Chat(ctx, conversation, nil, stream, 0)
+	if err != nil {
+		return nil, fmt.Errorf("model chat failed: %w", err)
+	}
+	if response == nil {
+		return nil, fmt.Errorf("received nil response from model")
+	}
+	if stream && streamCh == nil {
+		return nil, fmt.Errorf("stream channel is nil but streaming is enabled")
+	}
+
+	if streamCh != nil {
+		tui.ProgressSuccess("Stream started.")
+		for event := range streamCh {
+			if err := streamHandler(event); err != nil {
+				return nil, fmt.Errorf("stream handler error: %w", err)
+			}
+		}
+	}
+
+	return response, nil
+}
+
 // createStreamHandler creates a stream handler with state tracking for thinking/content transitions
 func createStreamHandler(cfg *config.OrlaConfig) StreamHandler {
 	var inThinking bool
 	thinkingEnabled := cfg != nil && cfg.ShowThinking
-	showToolCalls := cfg != nil && cfg.ShowToolCalls
+	showToolCalls := false
 	var toolNames []string
 	var inToolCalls bool
 
@@ -231,16 +280,13 @@ func ExecuteAgentPrompt(prompt string, modelOverride string) error {
 	}
 	tui.ProgressSuccess("Model ready")
 
-	// Since a one-shot agent has no tools, we pass nil for the MCP client
-	loop := NewLoop(nil, executor.provider, cfg)
-
 	// Create stream handler if streaming is enabled
 	var streamHandler StreamHandler
 	if cfg.Streaming {
 		streamHandler = createStreamHandler(cfg)
 	}
 
-	response, executeErr := loop.Execute(ctx, prompt, nil, cfg.Streaming, streamHandler)
+	response, executeErr := executor.Execute(ctx, prompt, nil, cfg.Streaming, streamHandler)
 	if executeErr != nil {
 		return fmt.Errorf("agent execution failed: %w", executeErr)
 	}

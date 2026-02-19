@@ -12,7 +12,6 @@ import (
 	"github.com/sashabaranov/go-openai"
 	"github.com/stretchr/testify/require"
 
-	"github.com/dorcha-inc/orla/internal/config"
 	"github.com/dorcha-inc/orla/internal/core"
 )
 
@@ -190,23 +189,23 @@ func TestGetOpenAICompatibleEndpoint_Validation(t *testing.T) {
 	_, _, err := getOpenAICompatibleEndpoint(nil)
 	require.Error(t, err)
 
-	_, _, err = getOpenAICompatibleEndpoint(&config.OrlaConfig{LLMBackend: nil})
+	_, _, err = getOpenAICompatibleEndpoint(nil)
 	require.Error(t, err)
 
-	_, _, err = getOpenAICompatibleEndpoint(&config.OrlaConfig{
-		LLMBackend: &core.LLMBackend{
+	_, _, err = getOpenAICompatibleEndpoint(
+		&core.LLMBackend{
 			Endpoint: "http://example",
 			Type:     "",
 		},
-	})
+	)
 	require.Error(t, err)
 
-	_, _, err = getOpenAICompatibleEndpoint(&config.OrlaConfig{
-		LLMBackend: &core.LLMBackend{
+	_, _, err = getOpenAICompatibleEndpoint(
+		&core.LLMBackend{
 			Endpoint: "http://example",
 			Type:     core.LLMInferenceAPITypeOllama,
 		},
-	})
+	)
 	require.Error(t, err)
 }
 
@@ -214,15 +213,13 @@ func TestNewOpenAIProvider_RequiresAPIKeyEnvVarValue(t *testing.T) {
 	t.Parallel()
 
 	// API key env var is not set => should error.
-	cfg := &config.OrlaConfig{
-		LLMBackend: &core.LLMBackend{
-			Endpoint:     "http://example",
-			Type:         core.LLMInferenceAPITypeOpenAI,
-			APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
-		},
+	llmBackend := &core.LLMBackend{
+		Endpoint:     "http://example",
+		Type:         core.LLMInferenceAPITypeOpenAI,
+		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
 
-	_, err := NewOpenAIProvider("model", cfg)
+	_, err := NewOpenAIProvider("model", llmBackend)
 	require.Error(t, err)
 }
 
@@ -258,15 +255,13 @@ func TestOpenAIProvider_Chat_NonStreaming_BasicAndToolCalls(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	t.Setenv("ORLA_TEST_OPENAI_KEY", "k")
-	cfg := &config.OrlaConfig{
-		LLMBackend: &core.LLMBackend{
-			Endpoint:     srv.URL,
-			Type:         core.LLMInferenceAPITypeOpenAI,
-			APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
-		},
+	llmBackend := &core.LLMBackend{
+		Endpoint:     srv.URL,
+		Type:         core.LLMInferenceAPITypeOpenAI,
+		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
 
-	p, err := NewOpenAIProvider("m", cfg)
+	p, err := NewOpenAIProvider("m", llmBackend)
 	require.NoError(t, err)
 	require.NoError(t, p.EnsureReady(context.Background()))
 
@@ -299,15 +294,13 @@ func TestOpenAIProvider_Chat_Streaming_Content(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	t.Setenv("ORLA_TEST_OPENAI_KEY", "k")
-	cfg := &config.OrlaConfig{
-		LLMBackend: &core.LLMBackend{
-			Endpoint:     srv.URL,
-			Type:         core.LLMInferenceAPITypeOpenAI,
-			APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
-		},
+	llmBackend := &core.LLMBackend{
+		Endpoint:     srv.URL,
+		Type:         core.LLMInferenceAPITypeOpenAI,
+		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
 
-	p, err := NewOpenAIProvider("m", cfg)
+	p, err := NewOpenAIProvider("m", llmBackend)
 	require.NoError(t, err)
 
 	resp, ch, err := p.Chat(context.Background(), []Message{{Role: MessageRoleUser, Content: "hi"}}, nil, true, 0)
@@ -352,15 +345,13 @@ func TestOpenAIProvider_Chat_WithMaxTokens(t *testing.T) {
 	defer srv.Close()
 
 	t.Setenv("ORLA_TEST_OPENAI_KEY", "test-key")
-	cfg := &config.OrlaConfig{
-		LLMBackend: &core.LLMBackend{
-			Endpoint:     srv.URL,
-			Type:         core.LLMInferenceAPITypeOpenAI,
-			APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
-		},
+	llmBackend := &core.LLMBackend{
+		Endpoint:     srv.URL,
+		Type:         core.LLMInferenceAPITypeOpenAI,
+		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
 
-	p, err := NewOpenAIProvider("test-model", cfg)
+	p, err := NewOpenAIProvider("test-model", llmBackend)
 	require.NoError(t, err)
 	require.NoError(t, p.EnsureReady(context.Background()))
 
@@ -400,15 +391,13 @@ func TestOpenAIProvider_Chat_WithoutMaxTokens(t *testing.T) {
 	defer srv.Close()
 
 	t.Setenv("ORLA_TEST_OPENAI_KEY", "test-key")
-	cfg := &config.OrlaConfig{
-		LLMBackend: &core.LLMBackend{
-			Endpoint:     srv.URL,
-			Type:         core.LLMInferenceAPITypeOpenAI,
-			APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
-		},
+	llmBackend := &core.LLMBackend{
+		Endpoint:     srv.URL,
+		Type:         core.LLMInferenceAPITypeOpenAI,
+		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
 
-	p, err := NewOpenAIProvider("test-model", cfg)
+	p, err := NewOpenAIProvider("test-model", llmBackend)
 	require.NoError(t, err)
 	require.NoError(t, p.EnsureReady(context.Background()))
 
@@ -449,15 +438,13 @@ func TestOpenAIProvider_Chat_WithMaxTokensZero(t *testing.T) {
 	defer srv.Close()
 
 	t.Setenv("ORLA_TEST_OPENAI_KEY", "test-key")
-	cfg := &config.OrlaConfig{
-		LLMBackend: &core.LLMBackend{
-			Endpoint:     srv.URL,
-			Type:         core.LLMInferenceAPITypeOpenAI,
-			APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
-		},
+	llmBackend := &core.LLMBackend{
+		Endpoint:     srv.URL,
+		Type:         core.LLMInferenceAPITypeOpenAI,
+		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
 
-	p, err := NewOpenAIProvider("test-model", cfg)
+	p, err := NewOpenAIProvider("test-model", llmBackend)
 	require.NoError(t, err)
 	require.NoError(t, p.EnsureReady(context.Background()))
 
@@ -489,15 +476,13 @@ func TestOpenAIProvider_Chat_Streaming_WithToolCalls(t *testing.T) {
 
 	t.Setenv("ORLA_TEST_OPENAI_KEY", "k")
 
-	cfg := &config.OrlaConfig{
-		LLMBackend: &core.LLMBackend{
-			Endpoint:     srv.URL,
-			Type:         core.LLMInferenceAPITypeOpenAI,
-			APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
-		},
+	llmBackend := &core.LLMBackend{
+		Endpoint:     srv.URL,
+		Type:         core.LLMInferenceAPITypeOpenAI,
+		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
 
-	p, err := NewOpenAIProvider("m", cfg)
+	p, err := NewOpenAIProvider("m", llmBackend)
 	require.NoError(t, err)
 
 	resp, ch, err := p.Chat(context.Background(), []Message{{Role: MessageRoleUser, Content: "hi"}}, nil, true, 0)
@@ -553,15 +538,13 @@ func TestOpenAIProvider_Chat_NonStreaming_NoChoices(t *testing.T) {
 
 	t.Setenv("ORLA_TEST_OPENAI_KEY", "k")
 
-	cfg := &config.OrlaConfig{
-		LLMBackend: &core.LLMBackend{
-			Endpoint:     srv.URL,
-			Type:         core.LLMInferenceAPITypeOpenAI,
-			APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
-		},
+	llmBackend := &core.LLMBackend{
+		Endpoint:     srv.URL,
+		Type:         core.LLMInferenceAPITypeOpenAI,
+		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
 
-	p, err := NewOpenAIProvider("m", cfg)
+	p, err := NewOpenAIProvider("m", llmBackend)
 	require.NoError(t, err)
 
 	_, _, err = p.Chat(context.Background(), []Message{{Role: MessageRoleUser, Content: "hi"}}, nil, false, 0)
@@ -572,15 +555,13 @@ func TestOpenAIProvider_Chat_NonStreaming_NoChoices(t *testing.T) {
 func TestOpenAIProvider_Chat_ToolConversionError(t *testing.T) {
 	t.Setenv("ORLA_TEST_OPENAI_KEY", "k")
 
-	cfg := &config.OrlaConfig{
-		LLMBackend: &core.LLMBackend{
-			Endpoint:     "http://example",
-			Type:         core.LLMInferenceAPITypeOpenAI,
-			APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
-		},
+	llmBackend := &core.LLMBackend{
+		Endpoint:     "http://example",
+		Type:         core.LLMInferenceAPITypeOpenAI,
+		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
 
-	p, err := NewOpenAIProvider("m", cfg)
+	p, err := NewOpenAIProvider("m", llmBackend)
 	require.NoError(t, err)
 
 	// Tool with nil InputSchema should cause conversion error
@@ -600,12 +581,11 @@ func TestOpenAIProvider_Chat_ToolConversionError(t *testing.T) {
 func TestGetOpenAICompatibleEndpoint_MissingEndpoint(t *testing.T) {
 	t.Parallel()
 
-	_, _, err := getOpenAICompatibleEndpoint(&config.OrlaConfig{
-		LLMBackend: &core.LLMBackend{
+	_, _, err := getOpenAICompatibleEndpoint(
+		&core.LLMBackend{
 			Endpoint: "",
 			Type:     core.LLMInferenceAPITypeOpenAI,
-		},
-	})
+		})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "endpoint is required")
 }

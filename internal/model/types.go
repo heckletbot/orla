@@ -68,7 +68,7 @@ type Provider interface {
 
 	// Chat sends a chat request to the model and returns the response
 	// messages: conversation history
-	// tools: available tools (for tool calling) - uses mcp.Tool for MCP compatibility
+	// tools: available tools
 	// stream: if true, stream responses via the returned channel
 	// maxTokens: maximum number of tokens to generate; 0 means no limit (use provider default)
 	Chat(ctx context.Context, messages []Message, tools []*mcp.Tool, stream bool, maxTokens int) (*Response, <-chan StreamEvent, error)

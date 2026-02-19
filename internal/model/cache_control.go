@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dorcha-inc/orla/internal/config"
 	"github.com/dorcha-inc/orla/internal/core"
 	"go.uber.org/zap"
 )
@@ -201,35 +200,28 @@ func (c *SGLangCacheController) GetMemoryPressure(ctx context.Context) (float64,
 	return 0.0, nil
 }
 
-// NewCacheController creates a cache controller based on the LLM server configuration
-func NewCacheController(serverConfig *config.LLMServerConfig) (CacheController, error) {
-	if serverConfig == nil || serverConfig.Backend == nil {
-		return nil, fmt.Errorf("server config and backend are required")
+// NewCacheController creates a cache controller for the given backend.
+func NewCacheController(backend *core.LLMBackend) (CacheController, error) {
+	if backend == nil {
+		return nil, fmt.Errorf("backend is required")
 	}
 
-	switch serverConfig.Backend.Type {
+	switch backend.Type {
 	case core.LLMInferenceAPITypeSGLang:
-		// SGLang has a dedicated /flush_cache endpoint
-		if serverConfig.Backend.Endpoint == "" {
+		if backend.Endpoint == "" {
 			return nil, fmt.Errorf("endpoint is required for SGLang backend")
 		}
-		// Normalize endpoint (remove trailing slash)
-		endpoint := strings.TrimSuffix(serverConfig.Backend.Endpoint, "/")
-		// Remove /v1 suffix if present (SGLang flush endpoint is at base URL)
+		endpoint := strings.TrimSuffix(backend.Endpoint, "/")
 		endpoint = strings.TrimSuffix(endpoint, "/v1")
 		return NewSGLangCacheController(endpoint, nil), nil
 
 	case core.LLMInferenceAPITypeOpenAI:
-		// OpenAI-compatible backends may not support cache control
 		return nil, fmt.Errorf("cache control not supported for OpenAI-compatible backend")
 
 	case core.LLMInferenceAPITypeOllama:
-		// Ollama uses keep_alive parameter, not a flush endpoint
-		// Could implement OllamaCacheController that sets keep_alive=0 in requests
-		// For now, return nil to indicate cache control not yet implemented
 		return nil, fmt.Errorf("ollama cache control via keep_alive not yet implemented")
 
 	default:
-		return nil, fmt.Errorf("unsupported backend type for cache control: %s", serverConfig.Backend.Type)
+		return nil, fmt.Errorf("unsupported backend type for cache control: %s", backend.Type)
 	}
 }

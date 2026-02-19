@@ -11,8 +11,7 @@ import (
 )
 
 const (
-	DefaultModel        = "ollama:qwen3:0.6b"
-	DefaultMaxToolCalls = 10
+	DefaultModel = "ollama:qwen3:0.6b"
 )
 
 type OrlaLogLevel string
@@ -65,15 +64,10 @@ var validLogFormats = map[OrlaLogFormat]struct{}{
 	OrlaLogFormatJSON:   {},
 }
 
-// OrlaConfig represents the orla configuration used in both server and agent mode.
+// OrlaConfig represents the orla configuration for agent mode (and minimal shared settings).
+// The server is configured programmatically; no server-specific options are in config.
 type OrlaConfig struct {
-	// Server specific configuration
-	Port          int  `yaml:"port,omitempty" mapstructure:"port"`                       // the port to listen on
-	ToolTimeout   int  `yaml:"tool_timeout,omitempty" mapstructure:"tool_timeout"`       // the timeout for tool executions in seconds
-	MaxToolCalls  int  `yaml:"max_tool_calls,omitempty" mapstructure:"max_tool_calls"`   // maximum tool calls per prompt
-	ShowToolCalls bool `yaml:"show_tool_calls,omitempty" mapstructure:"show_tool_calls"` // show detailed tool call information
-
-	// Common configuration used by both server and agent mode
+	// Common configuration used by agent mode
 	LogFormat    OrlaLogFormat    `yaml:"log_format,omitempty" mapstructure:"log_format"`       // the log format, "pretty" or "json"
 	LogLevel     string           `yaml:"log_level,omitempty" mapstructure:"log_level"`         // the log level, "debug", "info", "warn", "error", "fatal"
 	LLMBackend   *core.LLMBackend `yaml:"llm_backend,omitempty" mapstructure:"llm_backend"`     // LLM backend configuration (endpoint, type, api_key)
@@ -103,18 +97,14 @@ func setupViper(configPath string) error {
 
 // setViperDefaults sets default values in Viper
 func setViperDefaults() {
-	viper.SetDefault("port", 8080)
-	viper.SetDefault("tool_timeout", 30)
 	viper.SetDefault("log_format", "json")
 	viper.SetDefault("log_level", "info")
 	viper.SetDefault("model", DefaultModel)
 	viper.SetDefault("auto_start_ollama", true)
 	viper.SetDefault("auto_configure_ollama_service", false)
-	viper.SetDefault("max_tool_calls", DefaultMaxToolCalls)
 	viper.SetDefault("streaming", true)
 	viper.SetDefault("output_format", "auto")
 	viper.SetDefault("show_thinking", false)
-	viper.SetDefault("show_tool_calls", false)
 	viper.SetDefault("show_progress", false)
 }
 
@@ -141,24 +131,12 @@ func LoadConfig(configPath string) (*OrlaConfig, error) {
 }
 
 func validateConfig(cfg *OrlaConfig) error {
-	if cfg.Port < 0 || cfg.Port > 65535 {
-		return fmt.Errorf("port must be between 0 and 65535, got %d", cfg.Port)
-	}
-
-	if cfg.ToolTimeout < 1 {
-		return fmt.Errorf("timeout must be at least 1 second, got %d", cfg.ToolTimeout)
-	}
-
 	if !IsValidMapKey(validLogFormats, cfg.LogFormat) {
 		return fmt.Errorf("log_format must be one of: %s, got '%s'", core.JoinMapKeys(validLogFormats), cfg.LogFormat)
 	}
 
 	if !IsValidMapKey(validLogLevels, OrlaLogLevel(cfg.LogLevel)) {
 		return fmt.Errorf("log_level must be one of: %s, got '%s'", core.JoinMapKeys(validLogLevels), cfg.LogLevel)
-	}
-
-	if cfg.MaxToolCalls < 1 {
-		return fmt.Errorf("max_tool_calls must be at least 1, got %d", cfg.MaxToolCalls)
 	}
 
 	if !IsValidMapKey(validOutputFormats, cfg.OutputFormat) {

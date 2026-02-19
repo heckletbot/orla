@@ -36,23 +36,6 @@ func InitLogger(pretty bool) error {
 	return nil
 }
 
-// LogToolExecution logs a tool execution event using zap's global logger
-func LogToolExecution(toolName string, duration float64, err error) {
-	fields := []zap.Field{
-		zap.String("tool", toolName),
-		zap.Float64("duration_seconds", duration),
-		zap.Bool("success", err == nil),
-	}
-
-	if err != nil {
-		fields = append(fields, zap.Error(err))
-		zap.L().Error("Tool execution failed", fields...)
-		return
-	}
-
-	zap.L().Info("Tool execution completed successfully", fields...)
-}
-
 // LogDeferredError takes a function that returns an error, calls it, and logs the error if it is not nil
 func LogDeferredError(fn func() error) {
 	if err := fn(); err != nil {

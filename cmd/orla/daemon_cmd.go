@@ -44,14 +44,9 @@ func newServeCmd() *cobra.Command {
 				listenAddress = listenAddr
 			}
 
-			// Create serving layer with empty config; configure via API/code (programmatic interface)
-			servingLayer, err := serving.NewLayer(&config.AgenticServingConfig{})
-			if err != nil {
-				return fmt.Errorf("failed to create serving layer: %w", err)
-			}
+			layer := serving.NewAgenticLayer()
 
-			// Create API server
-			apiServer := servingapi.NewServer(servingLayer, listenAddress)
+			apiServer := servingapi.NewAgenticServer(layer, listenAddress)
 
 			// Set up signal handling for graceful shutdown
 			ctx, cancel := context.WithCancel(context.Background())

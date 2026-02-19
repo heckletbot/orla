@@ -1,11 +1,14 @@
 package agent
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/dorcha-inc/orla/internal/config"
 	"github.com/dorcha-inc/orla/internal/model"
 	orlaTesting "github.com/dorcha-inc/orla/internal/testing"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,134 +27,6 @@ func TestDefaultStreamHandler_ContentEvent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, stdout, "Hello, world!", "Stdout should contain the content")
 	assert.Empty(t, stderr, "Stderr should be empty for ContentEvent")
-}
-
-func TestDefaultStreamHandler_ToolCallEvent_WithNameOnly(t *testing.T) {
-	testCases := []struct {
-		name           string
-		cfg            *config.OrlaConfig
-		expectedStderr string
-		expectedStdout string
-		emptyStdout    bool
-		emptyStderr    bool
-	}{
-		{name: "ShowToolCalls", cfg: &config.OrlaConfig{ShowToolCalls: false}, expectedStderr: "", expectedStdout: "", emptyStdout: true, emptyStderr: true},
-		{name: "ShowToolCalls", cfg: &config.OrlaConfig{ShowToolCalls: true}, expectedStderr: "tool call received: test_tool", expectedStdout: "", emptyStdout: true, emptyStderr: false},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			cfg := testCase.cfg
-
-			event := &model.ToolCallEvent{
-				Name:      "test_tool",
-				Arguments: nil,
-			}
-			capturedOutput, err := orlaTesting.NewCapturedOutput()
-			require.NoError(t, err)
-
-			err = createStreamHandler(cfg)(event)
-			require.NoError(t, err)
-
-			stdout, stderr, err := capturedOutput.Stop()
-			require.NoError(t, err)
-
-			if testCase.emptyStdout {
-				assert.Empty(t, stdout, "Stdout should be empty for ToolCallEvent")
-			} else {
-				assert.Contains(t, stdout, testCase.expectedStdout, "Stdout should contain the tool call")
-			}
-			if testCase.emptyStderr {
-				assert.Empty(t, stderr, "Stderr should be empty for ToolCallEvent")
-			} else {
-				assert.Contains(t, stderr, testCase.expectedStderr, "Stderr should contain the tool call")
-			}
-		})
-	}
-}
-
-func TestDefaultStreamHandler_ToolCallEvent_WithEmptyName(t *testing.T) {
-	event := &model.ToolCallEvent{
-		Name:      "",
-		Arguments: map[string]any{},
-	}
-
-	err := createStreamHandler(nil)(event)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tool call name is empty")
-}
-
-func TestDefaultStreamHandler_ToolCallEvent_WithArguments(t *testing.T) {
-	event := &model.ToolCallEvent{
-		Name: "test_tool",
-		Arguments: map[string]any{
-			"arg1": "value1",
-			"arg2": 42,
-		},
-	}
-
-	cfg := &config.OrlaConfig{ShowToolCalls: true}
-
-	capturedOutput, err := orlaTesting.NewCapturedOutput()
-	require.NoError(t, err)
-
-	err = createStreamHandler(cfg)(event)
-	require.NoError(t, err)
-
-	stdout, stderr, err := capturedOutput.Stop()
-	require.NoError(t, err)
-
-	assert.Empty(t, stdout, "Stdout should be empty for ToolCallEvent")
-	assert.Contains(t, stderr, "tool call received: test_tool", "Stderr should contain the tool call")
-	assert.Contains(t, stderr, "arg1", "Stderr should contain the arguments")
-	assert.Contains(t, stderr, "arg2", "Stderr should contain the arguments")
-
-	cfg.ShowToolCalls = false
-	capturedOutput2, err := orlaTesting.NewCapturedOutput()
-	require.NoError(t, err)
-	err = createStreamHandler(cfg)(event)
-	require.NoError(t, err)
-
-	stdout2, stderr2, err := capturedOutput2.Stop()
-	require.NoError(t, err)
-	assert.Empty(t, stderr2, "Stderr should be empty for ToolCallEvent when ShowToolCalls is false")
-	assert.Empty(t, stdout2, "Stdout should be empty for ToolCallEvent")
-}
-
-func TestDefaultStreamHandler_ToolCallEvent_WithUnmarshalableArguments(t *testing.T) {
-	// Use a channel which cannot be marshaled to JSON
-	ch := make(chan int)
-	event := &model.ToolCallEvent{
-		Name: "test_tool",
-		Arguments: map[string]any{
-			"channel": ch,
-		},
-	}
-	// Need to enable ShowToolCalls to test the marshaling error path
-	cfg := &config.OrlaConfig{ShowToolCalls: true}
-	err := createStreamHandler(cfg)(event)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to marshal tool call arguments")
-}
-
-func TestDefaultStreamHandler_ToolCallEvent_WithEmptyArguments(t *testing.T) {
-	event := &model.ToolCallEvent{
-		Name:      "test_tool",
-		Arguments: map[string]any{},
-	}
-
-	cfg := &config.OrlaConfig{ShowToolCalls: true}
-
-	capturedOutput, err := orlaTesting.NewCapturedOutput()
-	require.NoError(t, err)
-
-	err = createStreamHandler(cfg)(event)
-	require.NoError(t, err)
-
-	stdout, stderr, err := capturedOutput.Stop()
-	require.NoError(t, err)
-	assert.Empty(t, stdout, "Stdout should be empty for ToolCallEvent")
-	assert.Contains(t, stderr, "tool call received: test_tool", "Stderr should contain the tool call")
 }
 
 func TestDefaultStreamHandler_UnknownEventType(t *testing.T) {
@@ -226,37 +101,6 @@ func TestCreateStreamHandler_ThinkingToContentTransition(t *testing.T) {
 	assert.Contains(t, stdout, "content content", "Stdout should contain the content")
 }
 
-func TestCreateStreamHandler_ThinkingToToolCallTransition(t *testing.T) {
-	cfg := &config.OrlaConfig{ShowThinking: true, ShowToolCalls: true}
-	handler := createStreamHandler(cfg)
-
-	capturedOutput, err := orlaTesting.NewCapturedOutput()
-	require.NoError(t, err)
-
-	// Start with thinking
-	thinkingEvent := &model.ThinkingEvent{Content: "thinking"}
-	err = handler(thinkingEvent)
-	require.NoError(t, err)
-
-	// Then tool call (should complete thinking)
-	toolCallEvent := &model.ToolCallEvent{
-		Name:      "test_tool",
-		Arguments: map[string]any{},
-	}
-	err = handler(toolCallEvent)
-	require.NoError(t, err)
-
-	stdout, stderr, err := capturedOutput.Stop()
-	require.NoError(t, err)
-
-	// Thinking content and tool calls both go to stderr (metadata)
-	assert.Contains(t, stderr, "having a think:", "Stderr should contain the having a think message")
-	assert.Contains(t, stderr, "thinking", "Stderr should contain the thinking content")
-	assert.Contains(t, stderr, "completed the think", "Stderr should contain the completed the think message")
-	assert.Contains(t, stderr, "tool call received: test_tool", "Stderr should contain the tool call")
-	assert.Empty(t, stdout, "Stdout should be empty")
-}
-
 func TestCreateStreamHandler_MultipleThinkingEvents(t *testing.T) {
 	cfg := &config.OrlaConfig{ShowThinking: true}
 	handler := createStreamHandler(cfg)
@@ -268,26 +112,6 @@ func TestCreateStreamHandler_MultipleThinkingEvents(t *testing.T) {
 
 	// Second thinking event (should continue, not restart)
 	event2 := &model.ThinkingEvent{Content: "thinking 2"}
-	err = handler(event2)
-	assert.NoError(t, err)
-}
-
-func TestCreateStreamHandler_DuplicateToolNames(t *testing.T) {
-	cfg := &config.OrlaConfig{ShowToolCalls: false}
-	handler := createStreamHandler(cfg)
-
-	// Add same tool twice (should not duplicate in list)
-	event1 := &model.ToolCallEvent{
-		Name:      "test_tool",
-		Arguments: map[string]any{},
-	}
-	err := handler(event1)
-	assert.NoError(t, err)
-
-	event2 := &model.ToolCallEvent{
-		Name:      "test_tool",
-		Arguments: map[string]any{},
-	}
 	err = handler(event2)
 	assert.NoError(t, err)
 }
@@ -333,4 +157,249 @@ func TestCreateContextWithSignals(t *testing.T) {
 	default:
 		t.Fatal("Context should be cancelled after cancel() is called")
 	}
+}
+
+func TestNewExecutor(t *testing.T) {
+	tests := []struct {
+		name        string
+		cfg         *config.OrlaConfig
+		expectedErr bool
+		errContains string
+	}{
+		{
+			name: "valid config",
+			cfg: &config.OrlaConfig{
+				Model: "ollama:llama3",
+			},
+			expectedErr: false,
+		},
+		{
+			name: "invalid model",
+			cfg: &config.OrlaConfig{
+				Model: "invalid:model",
+			},
+			expectedErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			executor, err := NewExecutor(tt.cfg)
+			if tt.expectedErr {
+				require.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+				assert.Nil(t, executor)
+			} else {
+				require.NoError(t, err)
+				assert.NotNil(t, executor)
+				assert.Equal(t, tt.cfg, executor.cfg)
+				assert.NotNil(t, executor.provider)
+			}
+		})
+	}
+}
+
+func TestExecutor_Execute_NoToolCalls(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.OrlaConfig{Streaming: false}
+
+	provider := &mockProvider{
+		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, stream bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
+			return &model.Response{
+				Content:   "Hello, world!",
+				ToolCalls: []model.ToolCallWithID{},
+			}, nil, nil
+		},
+	}
+
+	executor := &Executor{provider: provider, cfg: cfg}
+	response, err := executor.Execute(ctx, "test prompt", nil, false, nil)
+	require.NoError(t, err)
+	assert.NotNil(t, response)
+	assert.Equal(t, "Hello, world!", response.Content)
+	assert.Empty(t, response.ToolCalls)
+}
+
+func TestExecutor_Execute_Streaming(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.OrlaConfig{Streaming: true}
+
+	chunks := []string{"Hello", " ", "world", "!"}
+
+	streamCh := make(chan model.StreamEvent, len(chunks))
+	provider := &mockProvider{
+		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, stream bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
+			if stream {
+				go func() {
+					for _, chunk := range chunks {
+						streamCh <- &model.ContentEvent{Content: chunk}
+					}
+					close(streamCh)
+				}()
+				return &model.Response{
+					Content:   "Hello world!",
+					ToolCalls: []model.ToolCallWithID{},
+				}, streamCh, nil
+			}
+			return &model.Response{Content: "test"}, nil, nil
+		},
+	}
+
+	var receivedChunks []string
+	streamHandler := func(event model.StreamEvent) error {
+		if contentEvent, ok := event.(*model.ContentEvent); ok {
+			receivedChunks = append(receivedChunks, contentEvent.Content)
+		}
+		return nil
+	}
+
+	executor := &Executor{provider: provider, cfg: cfg}
+	response, err := executor.Execute(ctx, "test prompt", nil, true, streamHandler)
+	require.NoError(t, err)
+	assert.NotNil(t, response)
+	assert.Equal(t, chunks, receivedChunks)
+}
+
+func TestExecutor_Execute_StreamingError(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.OrlaConfig{Streaming: true}
+
+	streamCh := make(chan model.StreamEvent, 1)
+	provider := &mockProvider{
+		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, stream bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
+			go func() {
+				streamCh <- &model.ContentEvent{Content: "chunk"}
+				close(streamCh)
+			}()
+			return &model.Response{
+				Content:   "test",
+				ToolCalls: []model.ToolCallWithID{},
+			}, streamCh, nil
+		},
+	}
+
+	streamHandler := func(event model.StreamEvent) error {
+		return errors.New("stream handler error")
+	}
+
+	executor := &Executor{provider: provider, cfg: cfg}
+	_, err := executor.Execute(ctx, "test prompt", nil, true, streamHandler)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stream handler error")
+}
+
+func TestExecutor_Execute_ChatError(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.OrlaConfig{Streaming: false}
+
+	provider := &mockProvider{
+		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, stream bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
+			return nil, nil, errors.New("chat error")
+		},
+	}
+
+	executor := &Executor{provider: provider, cfg: cfg}
+	_, err := executor.Execute(ctx, "test prompt", nil, false, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model chat failed")
+}
+
+func TestExecutor_Execute_NilResponse(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.OrlaConfig{Streaming: false}
+
+	provider := &mockProvider{
+		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, stream bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
+			return nil, nil, nil
+		},
+	}
+
+	executor := &Executor{provider: provider, cfg: cfg}
+	_, err := executor.Execute(ctx, "test prompt", nil, false, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "received nil response")
+}
+
+func TestExecutor_Execute_StreamingWithoutHandler(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.OrlaConfig{Streaming: true}
+
+	provider := &mockProvider{}
+	executor := &Executor{provider: provider, cfg: cfg}
+	_, err := executor.Execute(ctx, "test prompt", nil, true, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stream handler is required")
+}
+
+func TestExecutor_Execute_WithExistingMessages(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.OrlaConfig{Streaming: false}
+
+	var receivedMessages []model.Message
+	provider := &mockProvider{
+		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, stream bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
+			receivedMessages = messages
+			return &model.Response{
+				Content:   "response",
+				ToolCalls: []model.ToolCallWithID{},
+			}, nil, nil
+		},
+	}
+
+	existingMessages := []model.Message{
+		{Role: model.MessageRoleUser, Content: "previous message"},
+	}
+
+	executor := &Executor{provider: provider, cfg: cfg}
+	response, err := executor.Execute(ctx, "new prompt", existingMessages, false, nil)
+	require.NoError(t, err)
+	assert.NotNil(t, response)
+	assert.Len(t, receivedMessages, 2)
+	assert.Equal(t, "previous message", receivedMessages[0].Content)
+	assert.Equal(t, "new prompt", receivedMessages[1].Content)
+}
+
+func TestExecutor_Execute_StreamChannelNil(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.OrlaConfig{Streaming: true}
+
+	provider := &mockProvider{
+		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, stream bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
+			return &model.Response{
+				Content:   "test",
+				ToolCalls: []model.ToolCallWithID{},
+			}, nil, nil
+		},
+	}
+
+	executor := &Executor{provider: provider, cfg: cfg}
+	_, err := executor.Execute(ctx, "test", nil, true, func(event model.StreamEvent) error { return nil })
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stream channel is nil")
+}
+
+func TestExecutor_Execute_WithContent(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.OrlaConfig{Streaming: false}
+
+	var receivedMessages []model.Message
+	provider := &mockProvider{
+		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, stream bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
+			receivedMessages = messages
+			return &model.Response{
+				Content:   "Here's the result",
+				ToolCalls: []model.ToolCallWithID{},
+			}, nil, nil
+		},
+	}
+
+	executor := &Executor{provider: provider, cfg: cfg}
+	response, err := executor.Execute(ctx, "test", nil, false, nil)
+	require.NoError(t, err)
+	assert.NotNil(t, response)
+	assert.Equal(t, "Here's the result", response.Content)
+	assert.Len(t, receivedMessages, 1)
+	assert.Equal(t, "test", receivedMessages[0].Content)
 }
