@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"log"
 
+	"github.com/dorcha-inc/orla/internal/core"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -25,6 +27,13 @@ func validateVersionAndBuildDate() {
 }
 
 func main() {
+	// Initialize a default logger so zap.L() is never a no-op (e.g. before serve/agent load config).
+	if err := core.InitLogger(false); err != nil {
+		log.Fatal("Failed to initialize logger:", err)
+	}
+
+	zap.L().Info("starting orla")
+
 	validateVersionAndBuildDate()
 
 	rootCmd := &cobra.Command{
@@ -37,8 +46,7 @@ func main() {
 	rootCmd.AddCommand(newServeCmd())
 	rootCmd.AddCommand(newAgentCmd())
 
-	rootErr := rootCmd.Execute()
-	if rootErr != nil {
-		zap.L().Fatal("Error executing root command", zap.Error(rootErr))
+	if err := rootCmd.Execute(); err != nil {
+		zap.L().Fatal("Error executing root command", zap.Error(err))
 	}
 }
