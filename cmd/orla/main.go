@@ -16,13 +16,14 @@ var (
 	buildDate string
 )
 
-func validateVersionAndBuildDate() {
+func applyVersionDefaults() {
 	if version == "" {
-		zap.L().Fatal("version is not set, please set the version via -ldflags at build time")
+		zap.L().Warn("version is not set, using default dev version")
+		version = "dev"
 	}
-
 	if buildDate == "" {
-		zap.L().Fatal("buildDate is not set, please set the buildDate via -ldflags at build time")
+		zap.L().Warn("buildDate is not set, using default unknown build date")
+		buildDate = "unknown"
 	}
 }
 
@@ -34,7 +35,7 @@ func main() {
 
 	zap.L().Info("starting orla")
 
-	validateVersionAndBuildDate()
+	applyVersionDefaults()
 
 	rootCmd := &cobra.Command{
 		Use:     "orla",
