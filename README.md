@@ -1,4 +1,6 @@
-# Orla
+<p align="center">
+  <img src="share/orla_banner_no_caption.png" alt="Orla" width="400">
+</p>
 
 <p align="center">
   <a href="https://golang.org/"><img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go" alt="Go Version"></a>
@@ -10,6 +12,10 @@
 </p>
 
 Orla is a high performance agent execution engine that can run as a service or as a standalone tool. Orla sits above LLM backends including SGLang, Ollama, and vLLM. It provides a simple unified API for developing and running agents. With Orla, you can easily orchestrate your agentic workflows across multiple models, LLM backends, GPUs (or CPUs), and cloud instances.
+
+<p align="center">
+  <img src="share/main.gif" alt="Orla CLI and API demo" width="700">
+</p>
 
 ```bash
 brew install --cask dorcha-inc/orla/orla
