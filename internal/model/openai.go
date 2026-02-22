@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/sashabaranov/go-openai"
 	"go.uber.org/zap"
@@ -133,7 +134,7 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []Message, tools []*
 	return p.handleNonStreamingChat(ctx, req)
 }
 
-// handleNonStreamingChat handles non-streaming chat requests
+// handleNonStreamingChat handles non-streaming chat requests.
 func (p *OpenAIProvider) handleNonStreamingChat(ctx context.Context, req openai.ChatCompletionRequest) (*Response, <-chan StreamEvent, error) {
 	completion, err := p.client.CreateChatCompletion(ctx, req)
 	if err != nil {
@@ -162,8 +163,9 @@ func (p *OpenAIProvider) handleNonStreamingChat(ctx context.Context, req openai.
 	return response, nil, nil
 }
 
-// handleStreamingChat handles streaming chat requests
+// handleStreamingChat handles streaming chat requests. It records TTFT/TPOT and sets response.Metrics when the stream completes.
 func (p *OpenAIProvider) handleStreamingChat(ctx context.Context, req openai.ChatCompletionRequest) (*Response, <-chan StreamEvent, error) {
+	req.StreamOptions = &openai.StreamOptions{IncludeUsage: true}
 	stream, err := p.client.CreateChatCompletionStream(ctx, req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("OpenAI-compatible API error: %w", err)
@@ -180,9 +182,10 @@ func (p *OpenAIProvider) handleStreamingChat(ctx context.Context, req openai.Cha
 		defer close(ch)
 		defer core.LogDeferredError(stream.Close)
 
+		start := time.Now()
+		var firstContentAt, lastContentAt time.Time
+		var completionTokens int
 		var accumulatedToolCalls []openai.ToolCall
-		chunkCount := 0
-		contentChunks := 0
 
 		for {
 			chunk, err := stream.Recv()
@@ -194,7 +197,9 @@ func (p *OpenAIProvider) handleStreamingChat(ctx context.Context, req openai.Cha
 				break
 			}
 
-			chunkCount++
+			if chunk.Usage != nil && chunk.Usage.CompletionTokens > 0 {
+				completionTokens = chunk.Usage.CompletionTokens
+			}
 
 			if len(chunk.Choices) == 0 {
 				continue
@@ -205,7 +210,11 @@ func (p *OpenAIProvider) handleStreamingChat(ctx context.Context, req openai.Cha
 			// Accumulate content
 			if delta.Content != "" {
 				response.Content += delta.Content
-				contentChunks++
+				now := time.Now()
+				if firstContentAt.IsZero() {
+					firstContentAt = now
+				}
+				lastContentAt = now
 				ch <- &ContentEvent{Content: delta.Content}
 			}
 
@@ -264,6 +273,19 @@ func (p *OpenAIProvider) handleStreamingChat(ctx context.Context, req openai.Cha
 				zap.L().Error("Failed to convert tool calls from stream", zap.Error(err))
 			}
 			response.ToolCalls = toolCalls
+		}
+
+		// TTFT/TPOT metrics (only meaningful when streaming)
+		response.Metrics = &ResponseMetrics{}
+		if !firstContentAt.IsZero() {
+			response.Metrics.TTFTMs = firstContentAt.Sub(start).Milliseconds()
+		}
+		if completionTokens > 0 && !firstContentAt.IsZero() && !lastContentAt.IsZero() {
+			decodeMs := lastContentAt.Sub(firstContentAt).Milliseconds()
+			response.Metrics.TPOTMs = decodeMs / int64(completionTokens)
+			if response.Metrics.TPOTMs == 0 && decodeMs > 0 {
+				response.Metrics.TPOTMs = 1
+			}
 		}
 	}()
 

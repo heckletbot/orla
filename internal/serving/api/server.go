@@ -15,6 +15,13 @@ import (
 	"go.uber.org/zap"
 )
 
+// SSE event types for execute stream
+const (
+	sseEventContent  = "content"
+	sseEventThinking = "thinking"
+	sseEventDone     = "done"
+)
+
 // AgenticServer is the HTTP API server for the daemon
 type AgenticServer struct {
 	layer      *serving.AgenticLayer
@@ -109,10 +116,14 @@ func (s *AgenticServer) handleExecute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	response, err := s.layer.Execute(ctx, req.Backend, messages, req.Tools, serving.ExecuteOptions{
-		MaxTokens: maxTokens,
-		Stream:    req.Stream,
-	})
+	opts := serving.ExecuteOptions{MaxTokens: maxTokens, Stream: req.Stream}
+
+	if req.Stream {
+		s.handleExecuteStream(w, ctx, req.Backend, messages, req.Tools, opts)
+		return
+	}
+
+	response, err := s.layer.Execute(ctx, req.Backend, messages, req.Tools, opts)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -135,13 +146,52 @@ func (s *AgenticServer) handleExecute(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *AgenticServer) handleExecuteStream(w http.ResponseWriter, ctx context.Context, backend string, messages []model.Message, tools []*mcp.Tool, opts serving.ExecuteOptions) {
+	response, eventCh, err := s.layer.ExecuteStream(ctx, backend, messages, tools, opts)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		core.WriteJSONResponse(w, ExecuteResponse{Success: false, Error: err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		zap.L().Error("flusher not supported", zap.String("backend", backend))
+		http.Error(w, "flusher not supported", http.StatusInternalServerError)
+		return
+	}
+
+	if eventCh != nil {
+		for ev := range eventCh {
+			switch e := ev.(type) {
+			case *model.ContentEvent:
+				core.WriteSSEResponse(w, flusher, sseEventContent, map[string]string{"content": e.Content})
+			case *model.ThinkingEvent:
+				core.WriteSSEResponse(w, flusher, sseEventThinking, map[string]string{"thinking": e.Content})
+			case *model.ToolCallEvent:
+				core.WriteSSEResponse(w, flusher, "tool_call", map[string]any{"name": e.Name, "arguments": e.Arguments})
+			}
+		}
+	}
+
+	core.WriteSSEResponse(w, flusher, sseEventDone, ExecuteResponse{
+		Success:  true,
+		Response: response,
+	})
+}
+
 // RegisterBackendRequest is the request body for registering an LLM backend.
 type RegisterBackendRequest struct {
-	Name          string `json:"name"`                     // backend name (used as "backend" in execute requests)
-	Endpoint      string `json:"endpoint"`                 // e.g. "http://vllm:8000/v1", "http://localhost:11434"
-	Type          string `json:"type"`                     // "openai" or "ollama" or "sglang"
-	ModelID       string `json:"model_id"`                 // full model identifier e.g. "openai:Qwen/Qwen3-4B-Instruct-2507", "ollama:llama3"
-	APIKeyEnvVar  string `json:"api_key_env_var,omitempty"` // optional env var name for API key (for openai-type backends)
+	Name         string `json:"name"`                      // backend name (used as "backend" in execute requests)
+	Endpoint     string `json:"endpoint"`                  // e.g. "http://vllm:8000/v1", "http://localhost:11434"
+	Type         string `json:"type"`                      // "openai" or "ollama" or "sglang"
+	ModelID      string `json:"model_id"`                  // full model identifier e.g. "openai:Qwen/Qwen3-4B-Instruct-2507", "ollama:llama3"
+	APIKeyEnvVar string `json:"api_key_env_var,omitempty"` // optional env var name for API key (for openai-type backends)
 }
 
 // RegisterBackendResponse is the response body for register backend.

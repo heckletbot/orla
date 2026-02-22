@@ -1,21 +1,38 @@
 // Package orla provides a public Go client library for the Orla serving layer daemon.
 //
-// Example usage:
+// Example (non-streaming):
 //
 //	client := orla.NewClient("http://localhost:8081")
 //	resp, err := client.Execute(ctx, &orla.ExecuteRequest{
 //	    Backend: "my-backend",
-//	    Prompt: "What is the weather in SF?",
+//	    Prompt:  "What is the weather in SF?",
 //	})
+//
+// Example (streaming):
+//
+//	events, err := client.ExecuteStream(ctx, &orla.ExecuteRequest{
+//	    Backend: "my-backend",
+//	    Prompt:  "Explain recursion briefly.",
+//	})
+//	if err != nil { ... }
+//	for ev := range events {
+//	    switch ev.Type {
+//	    case "content":  fmt.Print(ev.Content)
+//	    case "thinking": fmt.Print(ev.Thinking)
+//	    case "done":     resp = ev.Response
+//	    }
+//	}
 package orla
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // Client is the public API client for the Orla daemon
@@ -55,10 +72,10 @@ func (c *Client) Health(ctx context.Context) error {
 
 // RegisterBackendRequest is the request body for registering an LLM backend.
 type RegisterBackendRequest struct {
-	Name         string `json:"name"`                     // backend name (used as Backend in execute requests)
-	Endpoint     string `json:"endpoint"`                 // e.g. "http://localhost:8000/v1"
-	Type         string `json:"type"`                     // "openai", "ollama", or "sglang"
-	ModelID      string `json:"model_id"`                 // e.g. "openai:Qwen/Qwen3-4B-Instruct-2507"
+	Name         string `json:"name"`                      // backend name (used as Backend in execute requests)
+	Endpoint     string `json:"endpoint"`                  // e.g. "http://localhost:8000/v1"
+	Type         string `json:"type"`                      // "openai", "ollama", or "sglang"
+	ModelID      string `json:"model_id"`                  // e.g. "openai:Qwen/Qwen3-4B-Instruct-2507"
 	APIKeyEnvVar string `json:"api_key_env_var,omitempty"` // optional env var for API key (openai-type)
 }
 
@@ -131,6 +148,130 @@ type TaskResponse struct {
 type TaskResponseMetrics struct {
 	TTFTMs int64 `json:"ttft_ms,omitempty"`
 	TPOTMs int64 `json:"tpot_ms,omitempty"`
+}
+
+// StreamEvent is a single event from ExecuteStream. Exactly one of Content, Thinking, ToolCall, or Response is set, depending on Type.
+type StreamEvent struct {
+	Type     string         // "content", "thinking", "tool_call", or "done"
+	Content  string         // content delta (Type == "content")
+	Thinking string         // thinking delta (Type == "thinking")
+	ToolCall *ToolCallDelta // tool call (Type == "tool_call")
+	Response *TaskResponse  // final response (Type == "done")
+}
+
+// ToolCallDelta is a streaming tool call notification.
+type ToolCallDelta struct {
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments"`
+}
+
+// ExecuteStream runs inference with streaming. The returned channel receives content, thinking, and tool_call deltas, then a final "done" event with the full Response. Caller must consume the channel until closed.
+func (c *Client) ExecuteStream(ctx context.Context, req *ExecuteRequest) (<-chan StreamEvent, error) {
+	streamReq := *req
+	streamReq.Stream = true
+
+	url := fmt.Sprintf("%s/api/v1/execute", c.baseURL)
+	body, err := json.Marshal(&streamReq)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	httpResp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("execute request: %w", err)
+	}
+
+	if httpResp.StatusCode != http.StatusOK {
+		bodyBytes, err := io.ReadAll(httpResp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read response body: %w", err)
+		}
+
+		err = httpResp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to close response body: %w", err)
+		}
+
+		return nil, fmt.Errorf("execute failed with status %d: %s", httpResp.StatusCode, string(bodyBytes))
+	}
+
+	ch := make(chan StreamEvent)
+	go readSSEStream(httpResp.Body, ch)
+	return ch, nil
+}
+
+// readSSEStream parses SSE from r and sends StreamEvents to ch, then closes ch.
+func readSSEStream(r io.ReadCloser, ch chan StreamEvent) {
+	defer LogDeferredError(r.Close)
+	defer close(ch)
+
+	scanner := bufio.NewScanner(r)
+	var eventType, data string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			if eventType != "" && data != "" {
+				if ev := parseSSEEvent(eventType, data); ev != nil {
+					ch <- *ev
+				}
+			}
+			eventType = ""
+			data = ""
+			continue
+		}
+		if strings.HasPrefix(line, "event: ") {
+			eventType = strings.TrimPrefix(line, "event: ")
+			continue
+		}
+		if strings.HasPrefix(line, "data: ") {
+			data = strings.TrimPrefix(line, "data: ")
+			continue
+		}
+	}
+}
+
+func parseSSEEvent(eventType, data string) *StreamEvent {
+	ev := &StreamEvent{Type: eventType}
+	switch eventType {
+	case "content":
+		var v struct {
+			Content string `json:"content"`
+		}
+		if json.Unmarshal([]byte(data), &v) == nil {
+			ev.Content = v.Content
+			return ev
+		}
+	case "thinking":
+		var v struct {
+			Thinking string `json:"thinking"`
+		}
+		if json.Unmarshal([]byte(data), &v) == nil {
+			ev.Thinking = v.Thinking
+			return ev
+		}
+	case "tool_call":
+		var v struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if json.Unmarshal([]byte(data), &v) == nil {
+			ev.ToolCall = &ToolCallDelta{Name: v.Name, Arguments: v.Arguments}
+			return ev
+		}
+	case "done":
+		var v ExecuteResponse
+		if json.Unmarshal([]byte(data), &v) == nil && v.Success && v.Response != nil {
+			ev.Response = v.Response
+			return ev
+		}
+	}
+	return nil
 }
 
 // Execute runs inference on the named backend via the daemon.

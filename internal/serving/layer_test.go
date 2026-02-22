@@ -97,3 +97,40 @@ func TestLayer_Execute_ServerNotFound(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
+
+func TestLayer_Execute_RejectsStream(t *testing.T) {
+	layer := NewAgenticLayer()
+	layer.AddLLMBackend("test-server", &core.LLMBackend{
+		Type:     core.LLMInferenceAPITypeOllama,
+		Endpoint: "http://localhost:11434",
+	}, "ollama:test-model")
+
+	_, err := layer.Execute(context.Background(), "test-server", []model.Message{
+		{Role: model.MessageRoleUser, Content: "test"},
+	}, nil, ExecuteOptions{Stream: true})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ExecuteStream")
+}
+
+func TestLayer_ExecuteStream(t *testing.T) {
+	layer := NewAgenticLayer()
+	layer.AddLLMBackend("test-server", &core.LLMBackend{
+		Type:     core.LLMInferenceAPITypeOllama,
+		Endpoint: "http://localhost:11434",
+	}, "ollama:test-model")
+
+	mock := &mockProvider{name: "mock"}
+	layer.llmBackendManager.mu.Lock()
+	layer.llmBackendManager.providers["test-server"] = mock
+	layer.llmBackendManager.mu.Unlock()
+
+	response, ch, err := layer.ExecuteStream(context.Background(), "test-server", []model.Message{
+		{Role: model.MessageRoleUser, Content: "test"},
+	}, nil, ExecuteOptions{Stream: true, MaxTokens: 10})
+	require.NoError(t, err)
+	assert.Equal(t, "test response", response.Content)
+	if ch != nil {
+		for range ch {
+		}
+	}
+}
