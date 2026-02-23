@@ -5,12 +5,11 @@ import (
 	"fmt"
 )
 
-// Agent holds a client, a registered backend, and optional prompt/settings for execute calls.
-// Use Execute for a single response, or ExecuteStream for token-by-token events.
+// Agent holds a client, a registered backend, and options for execute calls.
+// Pass the prompt per call to Execute or ExecuteStream. Safe for concurrent use.
 type Agent struct {
 	Client    *OrlaClient
 	Backend   *LLMBackend
-	Prompt    string
 	MaxTokens int
 }
 
@@ -19,38 +18,27 @@ func NewAgent(client *OrlaClient, backend *LLMBackend) *Agent {
 	return &Agent{Client: client, Backend: backend}
 }
 
-// NewAgentWithPrompt returns an agent with the prompt set (e.g. for a one-shot run).
-func NewAgentWithPrompt(client *OrlaClient, backend *LLMBackend, prompt string) *Agent {
-	return &Agent{Client: client, Backend: backend, Prompt: prompt}
-}
-
-// SetPrompt sets the agent's prompt.
-func (a *Agent) SetPrompt(prompt string) {
-	a.Prompt = prompt
-}
-
 // SetMaxTokens sets the maximum tokens for execute calls (0 means backend default).
 func (a *Agent) SetMaxTokens(n int) {
 	a.MaxTokens = n
 }
 
-// req returns an ExecuteRequest from the agent's current fields.
-func (a *Agent) req() *ExecuteRequest {
-	r := &ExecuteRequest{Backend: a.Backend.Name, Prompt: a.Prompt}
+func (a *Agent) req(prompt string) *ExecuteRequest {
+	r := &ExecuteRequest{Backend: a.Backend.Name, Prompt: prompt}
 	if a.MaxTokens > 0 {
 		r.MaxTokens = a.MaxTokens
 	}
 	return r
 }
 
-// Execute runs a single non-streaming inference and returns the full response.
-func (a *Agent) Execute(ctx context.Context) (*InferenceResponse, error) {
-	return a.Client.Execute(ctx, a.req())
+// Execute runs a single non-streaming inference with the given prompt.
+func (a *Agent) Execute(ctx context.Context, prompt string) (*InferenceResponse, error) {
+	return a.Client.Execute(ctx, a.req(prompt))
 }
 
-// ExecuteStream runs inference with streaming and returns a channel of events (content, thinking, tool_call, done).
-func (a *Agent) ExecuteStream(ctx context.Context) (<-chan StreamEvent, error) {
-	return a.Client.ExecuteStream(ctx, a.req())
+// ExecuteStream runs inference with streaming; returns a channel of events (content, thinking, tool_call, done).
+func (a *Agent) ExecuteStream(ctx context.Context, prompt string) (<-chan StreamEvent, error) {
+	return a.Client.ExecuteStream(ctx, a.req(prompt))
 }
 
 // StreamHandler is an optional callback invoked for each stream event (e.g. to print tokens).
