@@ -61,6 +61,9 @@ func (a *Agent) ConsumeStream(ctx context.Context, stream <-chan StreamEvent, st
 			return nil, ctx.Err()
 		case event, ok := <-stream:
 			if !ok {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
 				return nil, fmt.Errorf("stream closed without a final response")
 			}
 			if streamHandler != nil {
