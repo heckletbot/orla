@@ -4,6 +4,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -193,7 +194,11 @@ func createStreamHandler(cfg *config.OrlaConfig) StreamHandler {
 		// Flush stdout to ensure immediate output
 		syncErr := os.Stdout.Sync()
 		if syncErr != nil {
-			zap.L().Error("failed to flush stdout", zap.Error(syncErr))
+			// Ignore errors for TTY/pipe where Sync() returns ENOTTY or EINVAL
+			var errno *syscall.Errno
+			if !errors.As(syncErr, &errno) || (*errno != syscall.ENOTTY && *errno != syscall.EINVAL) {
+				zap.L().Error("failed to flush stdout", zap.Error(syncErr))
+			}
 		}
 		return nil
 	}
