@@ -19,6 +19,7 @@ func TestAgent_req(t *testing.T) {
 
 	a.SetMaxTokens(100)
 	r = a.req("world")
-	assert.Equal(t, 100, r.MaxTokens)
+	require.NotNil(t, r.MaxTokens)
+	assert.Equal(t, 100, *r.MaxTokens)
 	assert.Equal(t, "world", r.Prompt)
 }

@@ -102,12 +102,14 @@ func (c *OrlaClient) RegisterBackend(ctx context.Context, req *RegisterBackendRe
 
 // ExecuteRequest represents a request to execute inference on a named backend.
 type ExecuteRequest struct {
-	Backend   string      `json:"backend"`
-	Prompt    string      `json:"prompt,omitempty"`
-	Messages  []Message   `json:"messages,omitempty"`
-	Tools     interface{} `json:"tools,omitempty"` // MCP tools ([]*mcp.Tool) or any JSON-serializable tool list
-	MaxTokens int         `json:"max_tokens,omitempty"`
-	Stream    bool        `json:"stream,omitempty"`
+	Backend     string    `json:"backend"`
+	Prompt      string    `json:"prompt,omitempty"`
+	Messages    []Message `json:"messages,omitempty"`
+	Tools       any       `json:"tools,omitempty"` // MCP tools ([]*mcp.Tool) or any JSON-serializable tool list
+	MaxTokens   *int      `json:"max_tokens,omitempty"`   // nil = backend default
+	Stream      bool      `json:"stream,omitempty"`
+	Temperature *float64  `json:"temperature,omitempty"`
+	TopP        *float64  `json:"top_p,omitempty"`
 }
 
 // ExecuteResponse represents the response from an execute call.

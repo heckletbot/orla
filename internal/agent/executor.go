@@ -64,7 +64,8 @@ func (e *Executor) Execute(ctx context.Context, prompt string, messages []model.
 
 	tui.Progress("Processing request")
 
-	response, streamCh, err := e.provider.Chat(ctx, conversation, nil, stream, 0)
+	opts := model.InferenceOptions{Stream: stream}
+	response, streamCh, err := e.provider.Chat(ctx, conversation, nil, opts)
 	if err != nil {
 		return nil, fmt.Errorf("model chat failed: %w", err)
 	}
@@ -194,9 +195,10 @@ func createStreamHandler(cfg *config.OrlaConfig) StreamHandler {
 		// Flush stdout to ensure immediate output
 		syncErr := os.Stdout.Sync()
 		if syncErr != nil {
-			// Ignore errors for TTY/pipe where Sync() returns ENOTTY or EINVAL
-			var errno *syscall.Errno
-			if !errors.As(syncErr, &errno) || (*errno != syscall.ENOTTY && *errno != syscall.EINVAL) {
+			// Ignore errors when stdout is not a TTY (e.g. pipe/redirect); Sync() can return
+			// ENOTTY or EINVAL, often wrapped in *fs.PathError.
+			var errno syscall.Errno
+			if !errors.As(syncErr, &errno) || (errno != syscall.ENOTTY && errno != syscall.EINVAL) {
 				zap.L().Error("failed to flush stdout", zap.Error(syncErr))
 			}
 		}

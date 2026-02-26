@@ -5,12 +5,19 @@ import (
 	"fmt"
 )
 
-// Agent holds a client, a registered backend, and options for execute calls.
-// Pass the prompt per call to Execute or ExecuteStream. Safe for concurrent use.
+// Agent represents a single agent profile including the backend and inference options.
+// Use it for execute calls and pass the prompt per call to Execute or ExecuteStream.
+// Note that this is safe for concurrent use i.e. multiple threads can use the same Agent
+// instance to execute calls.
 type Agent struct {
-	Client    *OrlaClient
-	Backend   *LLMBackend
-	MaxTokens int
+	Client *OrlaClient
+	Backend *LLMBackend
+	// MaxTokens is optional; nil means backend default.
+	MaxTokens *int
+	// Temperature is optional; nil means backend default.
+	Temperature *float64
+	// TopP is optional; nil means backend default.
+	TopP *float64
 }
 
 // NewAgent returns an agent that uses the given client and backend.
@@ -18,16 +25,26 @@ func NewAgent(client *OrlaClient, backend *LLMBackend) *Agent {
 	return &Agent{Client: client, Backend: backend}
 }
 
-// SetMaxTokens sets the maximum tokens for execute calls (0 means backend default).
+// SetMaxTokens sets the maximum tokens for execute calls (nil means backend default).
 func (a *Agent) SetMaxTokens(n int) {
-	a.MaxTokens = n
+	a.MaxTokens = &n
+}
+
+// SetTemperature sets the sampling temperature for execute calls (nil means backend default).
+func (a *Agent) SetTemperature(f float64) {
+	a.Temperature = &f
+}
+
+// SetTopP sets the nucleus sampling top_p for execute calls (nil means backend default).
+func (a *Agent) SetTopP(f float64) {
+	a.TopP = &f
 }
 
 func (a *Agent) req(prompt string) *ExecuteRequest {
 	r := &ExecuteRequest{Backend: a.Backend.Name, Prompt: prompt}
-	if a.MaxTokens > 0 {
-		r.MaxTokens = a.MaxTokens
-	}
+	r.MaxTokens = a.MaxTokens
+	r.Temperature = a.Temperature
+	r.TopP = a.TopP
 	return r
 }
 

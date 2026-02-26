@@ -115,7 +115,12 @@ func (p *OllamaProvider) EnsureReady(ctx context.Context) error {
 }
 
 // Chat sends a chat request to Ollama
-func (p *OllamaProvider) Chat(ctx context.Context, messages []Message, tools []*mcp.Tool, stream bool, maxTokens int) (*Response, <-chan StreamEvent, error) {
+func (p *OllamaProvider) Chat(ctx context.Context, messages []Message, tools []*mcp.Tool, opts InferenceOptions) (*Response, <-chan StreamEvent, error) {
+	stream := opts.Stream
+	var maxTokens int
+	if opts.MaxTokens != nil {
+		maxTokens = *opts.MaxTokens
+	}
 	// Ensure Ollama is ready
 	if err := p.EnsureReady(ctx); err != nil {
 		return nil, nil, err
@@ -143,6 +148,12 @@ func (p *OllamaProvider) Chat(ctx context.Context, messages []Message, tools []*
 
 	options := ollamaOptions{
 		Temperature: defaultOllamaTemperature,
+	}
+	if opts.Temperature != nil {
+		options.Temperature = *opts.Temperature
+	}
+	if opts.TopP != nil {
+		options.TopP = opts.TopP
 	}
 	if maxTokens > 0 {
 		options.NumPredict = &maxTokens
@@ -421,8 +432,9 @@ type ollamaMessage struct {
 }
 
 type ollamaOptions struct {
-	Temperature float64 `json:"temperature,omitempty"`
-	NumPredict  *int    `json:"num_predict,omitempty"` // Maximum number of tokens to generate
+	Temperature float64  `json:"temperature,omitempty"`
+	TopP        *float64 `json:"top_p,omitempty"`
+	NumPredict  *int     `json:"num_predict,omitempty"` // Maximum number of tokens to generate
 }
 
 type ollamaChatRequest struct {

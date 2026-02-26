@@ -20,12 +20,8 @@ func (m *mockProvider) Name() string {
 	return m.name
 }
 
-func (m *mockProvider) Chat(_ context.Context, _ []model.Message, _ []*mcp.Tool, _ bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
-	if maxTokens != 0 {
-		m.lastMaxTokens = &maxTokens
-	} else {
-		m.lastMaxTokens = nil
-	}
+func (m *mockProvider) Chat(_ context.Context, _ []model.Message, _ []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
+	m.lastMaxTokens = opts.MaxTokens
 	return &model.Response{
 		Content: "test response",
 	}, nil, nil
@@ -64,10 +60,11 @@ func TestLayer_Execute_WithMaxTokens(t *testing.T) {
 
 	response, err := layer.Execute(context.Background(), "test-server", []model.Message{
 		{Role: model.MessageRoleUser, Content: "test prompt"},
-	}, nil, ExecuteOptions{MaxTokens: 42})
+	}, nil, model.InferenceOptions{MaxTokens: core.IntPtr(42)})
 	require.NoError(t, err)
 	assert.Equal(t, "test response", response.Content)
 	assert.NotNil(t, mock.lastMaxTokens)
+	require.NotNil(t, mock.lastMaxTokens)
 	assert.Equal(t, 42, *mock.lastMaxTokens)
 }
 
@@ -85,7 +82,7 @@ func TestLayer_Execute_WithoutMaxTokens(t *testing.T) {
 
 	response, err := layer.Execute(context.Background(), "test-server", []model.Message{
 		{Role: model.MessageRoleUser, Content: "test prompt"},
-	}, nil, ExecuteOptions{})
+	}, nil, model.InferenceOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "test response", response.Content)
 	assert.Nil(t, mock.lastMaxTokens)
@@ -93,7 +90,7 @@ func TestLayer_Execute_WithoutMaxTokens(t *testing.T) {
 
 func TestLayer_Execute_ServerNotFound(t *testing.T) {
 	layer := NewAgenticLayer()
-	_, err := layer.Execute(context.Background(), "nonexistent", nil, nil, ExecuteOptions{})
+	_, err := layer.Execute(context.Background(), "nonexistent", nil, nil, model.InferenceOptions{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -107,7 +104,7 @@ func TestLayer_Execute_RejectsStream(t *testing.T) {
 
 	_, err := layer.Execute(context.Background(), "test-server", []model.Message{
 		{Role: model.MessageRoleUser, Content: "test"},
-	}, nil, ExecuteOptions{Stream: true})
+	}, nil, model.InferenceOptions{Stream: true})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ExecuteStream")
 }
@@ -126,7 +123,7 @@ func TestLayer_ExecuteStream(t *testing.T) {
 
 	response, ch, err := layer.ExecuteStream(context.Background(), "test-server", []model.Message{
 		{Role: model.MessageRoleUser, Content: "test"},
-	}, nil, ExecuteOptions{Stream: true, MaxTokens: 10})
+	}, nil, model.InferenceOptions{Stream: true, MaxTokens: core.IntPtr(10)})
 	require.NoError(t, err)
 	assert.Equal(t, "test response", response.Content)
 	if ch != nil {

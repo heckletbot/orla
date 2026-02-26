@@ -74,13 +74,13 @@ func (s *AgenticServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // ExecuteRequest is the request body for the execute endpoint.
+// Inference options (stream, max_tokens, temperature, top_p) are embedded so the JSON body stays flat.
 type ExecuteRequest struct {
-	Backend   string          `json:"backend"`
-	Prompt    string          `json:"prompt,omitempty"`
-	Messages  []model.Message `json:"messages,omitempty"`
-	Tools     []*mcp.Tool     `json:"tools,omitempty"`
-	MaxTokens *int            `json:"max_tokens,omitempty"`
-	Stream    bool            `json:"stream,omitempty"`
+	Backend  string          `json:"backend"`
+	Prompt   string          `json:"prompt,omitempty"`
+	Messages []model.Message `json:"messages,omitempty"`
+	Tools    []*mcp.Tool     `json:"tools,omitempty"`
+	model.InferenceOptions
 }
 
 // ExecuteResponse is the response body for the execute endpoint.
@@ -110,13 +110,8 @@ func (s *AgenticServer) handleExecute(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	maxTokens := 0
-	if req.MaxTokens != nil {
-		maxTokens = *req.MaxTokens
-	}
-
 	ctx := r.Context()
-	opts := serving.ExecuteOptions{MaxTokens: maxTokens, Stream: req.Stream}
+	opts := req.InferenceOptions
 
 	if req.Stream {
 		s.handleExecuteStream(w, ctx, req.Backend, messages, req.Tools, opts)
@@ -146,7 +141,7 @@ func (s *AgenticServer) handleExecute(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *AgenticServer) handleExecuteStream(w http.ResponseWriter, ctx context.Context, backend string, messages []model.Message, tools []*mcp.Tool, opts serving.ExecuteOptions) {
+func (s *AgenticServer) handleExecuteStream(w http.ResponseWriter, ctx context.Context, backend string, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) {
 	response, eventCh, err := s.layer.ExecuteStream(ctx, backend, messages, tools, opts)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")

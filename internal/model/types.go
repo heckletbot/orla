@@ -61,17 +61,22 @@ type Response struct {
 	Metrics     *ResponseMetrics   `json:"metrics"`      // Response metrics
 }
 
+// InferenceOptions holds per-request inference settings (agent profile knobs).
+// JSON tags match the execute API so the server can embed this in ExecuteRequest.
+type InferenceOptions struct {
+	Stream      bool     `json:"stream,omitempty"`
+	MaxTokens   *int     `json:"max_tokens,omitempty"`   // nil = backend default
+	Temperature *float64 `json:"temperature,omitempty"`   // nil = backend default
+	TopP        *float64 `json:"top_p,omitempty"`        // nil = backend default
+}
+
 // Provider is the interface that all model providers must implement
 type Provider interface {
 	// Name returns the provider name (e.g., "ollama", "openai", "anthropic")
 	Name() string
 
-	// Chat sends a chat request to the model and returns the response
-	// messages: conversation history
-	// tools: available tools
-	// stream: if true, stream responses via the returned channel
-	// maxTokens: maximum number of tokens to generate; 0 means no limit (use provider default)
-	Chat(ctx context.Context, messages []Message, tools []*mcp.Tool, stream bool, maxTokens int) (*Response, <-chan StreamEvent, error)
+	// Chat sends a chat request to the model with the given inference options and returns the response.
+	Chat(ctx context.Context, messages []Message, tools []*mcp.Tool, opts InferenceOptions) (*Response, <-chan StreamEvent, error)
 
 	// EnsureReady ensures the model provider is ready (e.g., starts Ollama if needed)
 	// Returns an error if the provider cannot be made ready

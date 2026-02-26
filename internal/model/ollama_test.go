@@ -91,7 +91,7 @@ func TestConvertOllamaToolCalls(t *testing.T) {
 		{
 			Type: "function",
 			Function: ollamaToolCallFunction{
-				Index:     intPtr(0),
+				Index:     core.IntPtr(0),
 				Name:      "test_tool",
 				Arguments: map[string]any{"arg1": "value1"},
 			},
@@ -121,11 +121,6 @@ func TestConvertOllamaToolCalls_StringArguments(t *testing.T) {
 	require.Len(t, toolCalls, 1)
 	assert.Equal(t, "test_tool", toolCalls[0].McpCallToolParams.Name)
 	assert.Equal(t, map[string]any{"arg1": "value1"}, toolCalls[0].McpCallToolParams.Arguments)
-}
-
-// Helper function
-func intPtr(i int) *int {
-	return &i
 }
 
 func TestOllamaProvider_SetTimeout(t *testing.T) {
@@ -377,7 +372,7 @@ func TestOllamaProvider_Chat_EnsureReadyFails(t *testing.T) {
 		{Role: MessageRoleUser, Content: "test"},
 	}
 
-	response, streamCh, err := provider.Chat(ctx, messages, nil, false, 0)
+	response, streamCh, err := provider.Chat(ctx, messages, nil, InferenceOptions{Stream: false})
 	require.Error(t, err)
 	assert.Nil(t, response)
 	assert.Nil(t, streamCh)
@@ -416,7 +411,7 @@ func TestOllamaProvider_Chat_HTTPError(t *testing.T) {
 		{Role: MessageRoleUser, Content: "test"},
 	}
 
-	response, streamCh, err := provider.Chat(ctx, messages, nil, false, 0)
+	response, streamCh, err := provider.Chat(ctx, messages, nil, InferenceOptions{Stream: false})
 	require.Error(t, err)
 	assert.Nil(t, response)
 	assert.Nil(t, streamCh)
@@ -455,7 +450,7 @@ func TestOllamaProvider_Chat_DecodeError(t *testing.T) {
 		{Role: MessageRoleUser, Content: "test"},
 	}
 
-	response, streamCh, err := provider.Chat(ctx, messages, nil, false, 0)
+	response, streamCh, err := provider.Chat(ctx, messages, nil, InferenceOptions{Stream: false})
 	require.Error(t, err)
 	assert.Nil(t, response)
 	assert.Nil(t, streamCh)
@@ -511,7 +506,7 @@ func TestOllamaProvider_Chat_WithTools_NoToolCalls(t *testing.T) {
 		{Role: MessageRoleUser, Content: "test"},
 	}
 
-	response, streamCh, err := provider.Chat(ctx, messages, tools, false, 0)
+	response, streamCh, err := provider.Chat(ctx, messages, tools, InferenceOptions{Stream: false})
 	require.NoError(t, err)
 	assert.NotNil(t, response)
 	assert.Nil(t, streamCh)
@@ -565,7 +560,7 @@ func TestOllamaProvider_Chat_Mock(t *testing.T) {
 		{Role: MessageRoleUser, Content: "Hello"},
 	}
 
-	response, streamCh, err := provider.Chat(ctx, messages, nil, false, 0)
+	response, streamCh, err := provider.Chat(ctx, messages, nil, InferenceOptions{Stream: false})
 	require.NoError(t, err)
 	assert.NotNil(t, response)
 	// streamCh is nil when stream=false
@@ -633,7 +628,7 @@ func TestOllamaProvider_Chat_Mock_WithToolCalls(t *testing.T) {
 		},
 	}
 
-	response, _, err := provider.Chat(ctx, messages, tools, false, 0)
+	response, _, err := provider.Chat(ctx, messages, tools, InferenceOptions{Stream: false})
 	require.NoError(t, err)
 	assert.NotNil(t, response)
 	assert.Len(t, response.ToolCalls, 1)
@@ -683,7 +678,7 @@ func TestOllamaProvider_Chat_Stream_Mock(t *testing.T) {
 		{Role: MessageRoleUser, Content: "Hello"},
 	}
 
-	response, streamCh, err := provider.Chat(ctx, messages, nil, true, 0)
+	response, streamCh, err := provider.Chat(ctx, messages, nil, InferenceOptions{Stream: true})
 	require.NoError(t, err)
 	require.NotNil(t, response)
 	require.NotNil(t, streamCh)
@@ -759,7 +754,7 @@ func TestOllamaProvider_Chat_ThinkEnabled_Mock(t *testing.T) {
 	ctx := context.Background()
 	messages := []Message{{Role: MessageRoleUser, Content: "Hello"}}
 
-	response, _, err := provider.Chat(ctx, messages, nil, false, 0)
+	response, _, err := provider.Chat(ctx, messages, nil, InferenceOptions{Stream: false})
 	require.NoError(t, err)
 	assert.NotNil(t, response)
 	assert.Equal(t, "I am thinking.", response.Thinking)
@@ -799,7 +794,7 @@ func TestOllamaProvider_Chat_WithToolMessage_Mock(t *testing.T) {
 		{Role: MessageRoleTool, Content: "tool output", ToolName: "test_tool"},
 	}
 
-	_, _, err := provider.Chat(ctx, messages, nil, false, 0)
+	_, _, err := provider.Chat(ctx, messages, nil, InferenceOptions{Stream: false})
 	require.NoError(t, err)
 }
 
@@ -813,7 +808,7 @@ func TestOllamaProvider_Chat_NewRequestError(t *testing.T) {
 	}
 	ctx := context.Background()
 	messages := []Message{{Role: MessageRoleUser, Content: "Hello"}}
-	_, _, err := provider.Chat(ctx, messages, nil, false, 0)
+	_, _, err := provider.Chat(ctx, messages, nil, InferenceOptions{Stream: false})
 	assert.Error(t, err)
 }
 
@@ -837,7 +832,7 @@ func TestOllamaProvider_Chat_ClientDoError(t *testing.T) {
 	}
 	ctx := context.Background()
 	messages := []Message{{Role: MessageRoleUser, Content: "Hello"}}
-	_, _, err := provider.Chat(ctx, messages, nil, false, 0)
+	_, _, err := provider.Chat(ctx, messages, nil, InferenceOptions{Stream: false})
 	assert.Error(t, err)
 }
 
@@ -1133,7 +1128,7 @@ func TestOllamaProvider_Chat_WithMaxTokens(t *testing.T) {
 	ctx := context.Background()
 	messages := []Message{{Role: MessageRoleUser, Content: "Hello"}}
 
-	response, _, err := provider.Chat(ctx, messages, nil, false, maxTokens)
+	response, _, err := provider.Chat(ctx, messages, nil, InferenceOptions{Stream: false, MaxTokens: core.IntPtr(maxTokens)})
 	require.NoError(t, err)
 	assert.NotNil(t, response)
 	assert.Equal(t, "Short response", response.Content)
@@ -1171,7 +1166,7 @@ func TestOllamaProvider_Chat_WithoutMaxTokens(t *testing.T) {
 	ctx := context.Background()
 	messages := []Message{{Role: MessageRoleUser, Content: "Hello"}}
 
-	response, _, err := provider.Chat(ctx, messages, nil, false, 0)
+	response, _, err := provider.Chat(ctx, messages, nil, InferenceOptions{Stream: false})
 	require.NoError(t, err)
 	assert.NotNil(t, response)
 	assert.Equal(t, "Response", response.Content)
@@ -1211,7 +1206,7 @@ func TestOllamaProvider_Chat_WithMaxTokensZero(t *testing.T) {
 	ctx := context.Background()
 	messages := []Message{{Role: MessageRoleUser, Content: "Hello"}}
 
-	response, _, err := provider.Chat(ctx, messages, nil, false, maxTokens)
+	response, _, err := provider.Chat(ctx, messages, nil, InferenceOptions{Stream: false, MaxTokens: core.IntPtr(maxTokens)})
 	require.NoError(t, err)
 	assert.NotNil(t, response)
 }

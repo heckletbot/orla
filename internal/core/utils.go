@@ -11,6 +11,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// IntPtr returns a pointer to n. Useful when we want to quickly convert a literal int to a pointer.
+func IntPtr(n int) *int { return &n }
+
 // JoinMapKeys joins the keys of a map into a comma-separated string.
 // Useful for error messages that need to list valid values.
 func JoinMapKeys[T comparable](m map[T]struct{}) string {

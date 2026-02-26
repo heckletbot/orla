@@ -45,7 +45,7 @@ func ensureOllamaAvailable(t *testing.T) *OllamaProvider {
 	testMessages := []Message{
 		{Role: MessageRoleUser, Content: "test"},
 	}
-	_, _, testErr := provider.Chat(ctx, testMessages, nil, false, 0)
+	_, _, testErr := provider.Chat(ctx, testMessages, nil, InferenceOptions{Stream: false})
 	if testErr != nil {
 		if strings.Contains(testErr.Error(), "model") && strings.Contains(testErr.Error(), "not found") {
 			t.Fatalf("Model '%s' is not available. Please pull it with: ollama pull %s", orlaTesting.GetTestModelName(), orlaTesting.GetTestModelName())
@@ -75,7 +75,7 @@ func TestOllamaProvider_Chat_Integration(t *testing.T) {
 
 	t.Logf("Sending Messages: %+v", messages)
 
-	response, streamCh, err := provider.Chat(ctx, messages, nil, false, 0)
+	response, streamCh, err := provider.Chat(ctx, messages, nil, InferenceOptions{Stream: false})
 
 	t.Logf("Response: %+v", response)
 
@@ -117,7 +117,7 @@ func TestOllamaProvider_Chat_WithTools_Integration(t *testing.T) {
 
 	prettyPrint(t, "Sending Messages", messages)
 
-	response, streamCh, err := provider.Chat(ctx, messages, tools, false, 0)
+	response, streamCh, err := provider.Chat(ctx, messages, tools, InferenceOptions{Stream: false})
 	require.NoError(t, err)
 
 	prettyPrint(t, "Response", response)
@@ -145,7 +145,7 @@ func TestOllamaProvider_Chat_Streaming_Integration(t *testing.T) {
 
 	prettyPrint(t, "Sending Messages", messages)
 
-	response, streamCh, err := provider.Chat(ctx, messages, nil, true, 0)
+	response, streamCh, err := provider.Chat(ctx, messages, nil, InferenceOptions{Stream: true})
 	require.NoError(t, err)
 	// Streaming responses return a response object that gets populated as chunks arrive
 	// The response is shared between the goroutine (writer) and caller (reader)
@@ -250,7 +250,7 @@ func TestOllamaProvider_RemoteEndpoint_Integration(t *testing.T) {
 	// Limit max tokens to speed up the test
 	maxTokens := 50
 
-	response, streamCh, chatErr := provider.Chat(testCtx, messages, nil, false, maxTokens)
+	response, streamCh, chatErr := provider.Chat(testCtx, messages, nil, InferenceOptions{Stream: false, MaxTokens: core.IntPtr(maxTokens)})
 	require.NoError(t, chatErr)
 	assert.NotNil(t, response)
 	assert.Nil(t, streamCh) // stream=false

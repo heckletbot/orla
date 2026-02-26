@@ -206,7 +206,7 @@ func TestExecutor_Execute_NoToolCalls(t *testing.T) {
 	cfg := &config.OrlaConfig{Streaming: false}
 
 	provider := &mockProvider{
-		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, stream bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
+		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
 			return &model.Response{
 				Content:   "Hello, world!",
 				ToolCalls: []model.ToolCallWithID{},
@@ -230,8 +230,8 @@ func TestExecutor_Execute_Streaming(t *testing.T) {
 
 	streamCh := make(chan model.StreamEvent, len(chunks))
 	provider := &mockProvider{
-		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, stream bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
-			if stream {
+		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
+			if opts.Stream {
 				go func() {
 					for _, chunk := range chunks {
 						streamCh <- &model.ContentEvent{Content: chunk}
@@ -268,7 +268,7 @@ func TestExecutor_Execute_StreamingError(t *testing.T) {
 
 	streamCh := make(chan model.StreamEvent, 1)
 	provider := &mockProvider{
-		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, stream bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
+		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
 			go func() {
 				streamCh <- &model.ContentEvent{Content: "chunk"}
 				close(streamCh)
@@ -295,7 +295,7 @@ func TestExecutor_Execute_ChatError(t *testing.T) {
 	cfg := &config.OrlaConfig{Streaming: false}
 
 	provider := &mockProvider{
-		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, stream bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
+		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
 			return nil, nil, errors.New("chat error")
 		},
 	}
@@ -311,7 +311,7 @@ func TestExecutor_Execute_NilResponse(t *testing.T) {
 	cfg := &config.OrlaConfig{Streaming: false}
 
 	provider := &mockProvider{
-		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, stream bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
+		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
 			return nil, nil, nil
 		},
 	}
@@ -339,7 +339,7 @@ func TestExecutor_Execute_WithExistingMessages(t *testing.T) {
 
 	var receivedMessages []model.Message
 	provider := &mockProvider{
-		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, stream bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
+		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
 			receivedMessages = messages
 			return &model.Response{
 				Content:   "response",
@@ -366,7 +366,7 @@ func TestExecutor_Execute_StreamChannelNil(t *testing.T) {
 	cfg := &config.OrlaConfig{Streaming: true}
 
 	provider := &mockProvider{
-		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, stream bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
+		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
 			return &model.Response{
 				Content:   "test",
 				ToolCalls: []model.ToolCallWithID{},
@@ -386,7 +386,7 @@ func TestExecutor_Execute_WithContent(t *testing.T) {
 
 	var receivedMessages []model.Message
 	provider := &mockProvider{
-		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, stream bool, maxTokens int) (*model.Response, <-chan model.StreamEvent, error) {
+		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
 			receivedMessages = messages
 			return &model.Response{
 				Content:   "Here's the result",
