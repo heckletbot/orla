@@ -25,6 +25,12 @@ services:
       stack: 67108864
     ipc: host
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:30000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
     deploy:
       resources:
         reservations:
@@ -44,7 +50,8 @@ services:
     volumes:
       - ./orla-sglang.yaml:/config/orla.yaml:ro
     depends_on:
-      - sglang
+      sglang:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
