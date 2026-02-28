@@ -101,9 +101,19 @@ func toolCallWithIDFromJSON(data []byte) (*toolCallWithID, error) {
 }
 
 func (tc *toolCallWithID) toToolCall() (*ToolCall, error) {
-	args, ok := tc.McpCallToolParams.Arguments.(ToolSchema)
-	if !ok {
-		return nil, fmt.Errorf("failed to convert arguments to ToolSchema: %v", tc.McpCallToolParams.Arguments)
+	var args ToolSchema
+	// Note(jadidbourbaki): in go, ToolSchema is a named type for map[string]any so it is
+	// not possible to convert it directly from a map[string]any via type assertion.
+	switch v := tc.McpCallToolParams.Arguments.(type) {
+	case ToolSchema:
+		args = v
+	case map[string]any:
+		args = ToolSchema(v)
+	case nil:
+		// nil is fine, we interpret it as no arguments.
+		args = ToolSchema{}
+	default:
+		return nil, fmt.Errorf("failed to convert arguments to ToolSchema (got type %T): %v", tc.McpCallToolParams.Arguments, tc.McpCallToolParams.Arguments)
 	}
 	return &ToolCall{
 		ID:             tc.ID,
