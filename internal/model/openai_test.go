@@ -135,7 +135,7 @@ func TestConvertOpenAIToolCalls_ParsesArgumentsAndUsesCallID(t *testing.T) {
 	require.Equal(t, "y", args["x"])
 }
 
-func TestConvertOpenAIToolCallsFromStream_BestEffortSkipsBadJSON(t *testing.T) {
+func TestConvertOpenAIToolCalls_InvalidJSONReturnsError(t *testing.T) {
 	t.Parallel()
 
 	calls := []openai.ToolCall{
@@ -157,13 +157,12 @@ func TestConvertOpenAIToolCallsFromStream_BestEffortSkipsBadJSON(t *testing.T) {
 		},
 	}
 
-	got, err := convertOpenAIToolCallsFromStream(calls)
+	got, err := convertOpenAIToolCalls(calls)
 	require.Error(t, err)
-	require.Len(t, got, 1)
-	require.Equal(t, "good", got[0].ID)
+	require.Nil(t, got)
 }
 
-func TestConvertOpenAIToolCallsFromStream_FallbackIDUsesIndex(t *testing.T) {
+func TestConvertOpenAIToolCalls_EmptyIDReturnsError(t *testing.T) {
 	t.Parallel()
 
 	calls := []openai.ToolCall{
@@ -177,10 +176,10 @@ func TestConvertOpenAIToolCallsFromStream_FallbackIDUsesIndex(t *testing.T) {
 		},
 	}
 
-	got, err := convertOpenAIToolCallsFromStream(calls)
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-	require.Equal(t, "call_0", got[0].ID)
+	got, err := convertOpenAIToolCalls(calls)
+	require.Error(t, err)
+	require.Nil(t, got)
+	require.Contains(t, err.Error(), "empty id")
 }
 
 func TestGetOpenAICompatibleEndpoint_Validation(t *testing.T) {

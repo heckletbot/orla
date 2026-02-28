@@ -129,11 +129,14 @@ type Message struct {
 	ToolName   string `json:"tool_name,omitempty"`
 }
 
+// RawToolCall is a raw tool call from the inference response.
+type RawToolCall []byte
+
 // InferenceResponse represents the response from inference.
 type InferenceResponse struct {
 	Content   string                    `json:"content"`
 	Thinking  string                    `json:"thinking,omitempty"`
-	ToolCalls [][]byte                  `json:"tool_calls,omitempty"`
+	ToolCalls []RawToolCall             `json:"tool_calls,omitempty"`
 	Metrics   *InferenceResponseMetrics `json:"metrics,omitempty"`
 }
 

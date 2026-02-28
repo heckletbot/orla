@@ -57,29 +57,12 @@ func TestToolCallWithID(t *testing.T) {
 	assert.Equal(t, "value1", args["arg1"])
 }
 
-func TestToolResultWithID(t *testing.T) {
-	toolResult := ToolResultWithID{
-		ID: "call-123",
-		McpCallToolResult: mcp.CallToolResult{
-			IsError: false,
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: "result"},
-			},
-		},
-	}
-
-	assert.Equal(t, "call-123", toolResult.ID)
-	assert.False(t, toolResult.McpCallToolResult.IsError)
-	assert.Len(t, toolResult.McpCallToolResult.Content, 1)
-}
-
 func TestResponse_Empty(t *testing.T) {
 	response := &Response{}
 
 	assert.Empty(t, response.Content)
 	assert.Empty(t, response.Thinking)
 	assert.Empty(t, response.ToolCalls)
-	assert.Empty(t, response.ToolResults)
 }
 
 func TestResponse_WithContent(t *testing.T) {

@@ -275,7 +275,7 @@ func (p *OpenAIProvider) handleStreamingChat(ctx context.Context, req openai.Cha
 
 		// Convert accumulated tool calls to our format (after stream completes)
 		if len(accumulatedToolCalls) > 0 {
-			toolCalls, err := convertOpenAIToolCallsFromStream(accumulatedToolCalls)
+			toolCalls, err := convertOpenAIToolCalls(accumulatedToolCalls)
 			if err != nil {
 				zap.L().Error("Failed to convert tool calls from stream", zap.Error(err))
 			}
@@ -378,26 +378,20 @@ func convertToolsToOpenAIFormat(tools []*mcp.Tool) ([]openai.Tool, error) {
 }
 
 // convertOpenAiToolCall converts a go-openai tool call to orla's format.
-// idx is used as a fallback to generate a stable ID when OpenAI doesn't provide one.
 func convertOpenAiToolCall(call openai.ToolCall, idx int) (*ToolCallWithID, error) {
-	args := make(map[string]any)
+	if call.ID == "" {
+		return nil, fmt.Errorf("tool call at index %d has empty id (tool %s); backend must provide an id for result matching", idx, call.Function.Name)
+	}
 
-	// Parse arguments JSON string
+	args := make(map[string]any)
 	if call.Function.Arguments != "" {
-		jsonErr := json.Unmarshal([]byte(call.Function.Arguments), &args)
-		if jsonErr != nil {
-			return nil, fmt.Errorf("failed to unmarshal tool call arguments for tool %s: %w", call.Function.Name, jsonErr)
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal tool call arguments for tool %s: %w", call.Function.Name, err)
 		}
 	}
 
-	// Use OpenAI's ID if provided, otherwise use index
-	id := call.ID
-	if id == "" {
-		id = fmt.Sprintf("call_%d", idx)
-	}
-
 	return &ToolCallWithID{
-		ID: id,
+		ID: call.ID,
 		McpCallToolParams: mcp.CallToolParams{
 			Name:      call.Function.Name,
 			Arguments: args,
@@ -418,22 +412,4 @@ func convertOpenAIToolCalls(openAICalls []openai.ToolCall) ([]ToolCallWithID, er
 	}
 
 	return toolCalls, nil
-}
-
-// convertOpenAIToolCallsFromStream converts go-openai tool calls from stream to our format
-func convertOpenAIToolCallsFromStream(openAICalls []openai.ToolCall) ([]ToolCallWithID, error) {
-	toolCalls := make([]ToolCallWithID, 0, len(openAICalls))
-	var errs []error
-
-	for i, call := range openAICalls {
-		toolCall, err := convertOpenAiToolCall(call, i)
-		if err != nil {
-			// Best-effort: keep other tool calls; surface error for logging.
-			errs = append(errs, fmt.Errorf("failed to convert tool call for tool %s: %w", call.Function.Name, err))
-			continue
-		}
-		toolCalls = append(toolCalls, *toolCall)
-	}
-
-	return toolCalls, errors.Join(errs...)
 }

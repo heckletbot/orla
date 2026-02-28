@@ -22,12 +22,12 @@ type Agent struct {
 	// TopP is optional; nil means backend default.
 	TopP *float64
 	// Tools are the tools attached to this agent.
-	Tools []*Tool
+	Tools map[string]*Tool
 }
 
 // NewAgent returns an agent that uses the given client and backend.
 func NewAgent(client *OrlaClient, backend *LLMBackend) *Agent {
-	tools := make([]*Tool, 0)
+	tools := make(map[string]*Tool)
 	return &Agent{Client: client, Backend: backend, Tools: tools}
 }
 
@@ -47,7 +47,7 @@ func (a *Agent) AddTool(t *Tool) error {
 		return fmt.Errorf("tool cannot be nil")
 	}
 
-	a.Tools = append(a.Tools, t)
+	a.Tools[t.Name] = t
 	return nil
 }
 
@@ -75,9 +75,9 @@ func (a *Agent) reqWithMessages(messages []Message) *ExecuteRequest {
 }
 
 func (a *Agent) toolsToMCP() []*mcp.Tool {
-	out := make([]*mcp.Tool, len(a.Tools))
-	for i, t := range a.Tools {
-		out[i] = t.toMCP()
+	out := make([]*mcp.Tool, 0, len(a.Tools))
+	for _, t := range a.Tools {
+		out = append(out, t.toMCP())
 	}
 	return out
 }
@@ -149,42 +149,66 @@ func (a *Agent) ConsumeStream(ctx context.Context, stream <-chan StreamEvent, ha
 	}
 }
 
-// RunToolCalls parses the response's tool calls, runs each tool by name, and returns results.
-// The caller can append each result with result.ToMessage() to messages and call ExecuteWithMessages again.
-func (a *Agent) RunToolCalls(ctx context.Context, response *InferenceResponse) ([]ToolResult, error) {
-	calls, err := parseToolCalls(response.ToolCalls)
+func (a *Agent) RunToolCall(ctx context.Context, toolCall *ToolCall) (*ToolResult, error) {
+	if toolCall == nil {
+		return nil, fmt.Errorf("tool call cannot be nil")
+	}
+
+	tool, ok := a.Tools[toolCall.Name]
+	if !ok {
+		return nil, fmt.Errorf("unknown tool %q", toolCall.Name)
+	}
+
+	toolResult, err := tool.Run(ctx, toolCall.InputArguments)
+
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to run tool call: %w", err)
 	}
-	if len(calls) == 0 {
-		return nil, nil
+
+	if toolResult == nil {
+		return nil, fmt.Errorf("tool result is nil")
 	}
-	byName := make(map[string]*Tool)
-	for _, t := range a.Tools {
-		byName[t.Name] = t
-	}
-	results := make([]ToolResult, 0, len(calls))
-	for _, call := range calls {
-		tool, ok := byName[call.Name]
-		if !ok {
-			return nil, fmt.Errorf("unknown tool %q", call.Name)
-		}
-		args := call.InputArguments
-		if args == nil {
-			args = ToolSchema{}
-		}
-		out, err := tool.Run(ctx, args)
+
+	toolResult.ID = toolCall.ID
+	toolResult.Name = toolCall.Name
+
+	return toolResult, nil
+}
+
+// RunToolCallsInResponseAndGetToolResults parses the response's tool calls, runs each tool by name, and returns results.
+func (a *Agent) RunToolCallsInResponseAndGetToolResults(ctx context.Context, response *InferenceResponse) ([]*ToolResult, error) {
+	toolResults := make([]*ToolResult, 0, len(response.ToolCalls))
+
+	for _, call := range response.ToolCalls {
+		toolCall, err := NewToolCallFromRawToolCall(call)
 		if err != nil {
-			results = append(results, ToolResult{
-				ID: call.ID, Name: call.Name,
-				Error: err.Error(), IsError: true,
-			})
-			continue
+			return nil, fmt.Errorf("failed to parse tool call: %w", err)
 		}
-		if out == nil {
-			out = ToolSchema{}
+
+		toolResult, err := a.RunToolCall(ctx, toolCall)
+		if err != nil {
+			return nil, fmt.Errorf("failed to run tool call: %w", err)
 		}
-		results = append(results, ToolResult{ID: call.ID, Name: call.Name, OutputValues: out})
+		toolResults = append(toolResults, toolResult)
 	}
-	return results, nil
+	return toolResults, nil
+}
+
+// RunToolCallsInResponse runs the tool calls in the response and returns the tool result messages.
+func (a *Agent) RunToolCallsInResponse(ctx context.Context, response *InferenceResponse) ([]*Message, error) {
+	toolResults, err := a.RunToolCallsInResponseAndGetToolResults(ctx, response)
+	if err != nil {
+		return nil, fmt.Errorf("failed to run tool calls: %w", err)
+	}
+
+	toolMessages := make([]*Message, 0, len(toolResults))
+	for _, toolResult := range toolResults {
+		toolMessage, err := toolResult.ToMessage()
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert tool result to message: %w", err)
+		}
+		toolMessages = append(toolMessages, toolMessage)
+	}
+
+	return toolMessages, nil
 }

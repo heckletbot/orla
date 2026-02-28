@@ -21,12 +21,18 @@ func (r MessageRole) String() string {
 	return string(r)
 }
 
-// Message represents a chat message in a conversation
+// Message represents a chat message in a conversation.
+// For role "tool" i.e tool calls, set both ToolCallID and ToolName when building messages.
+// The OpenAI API uses ToolCallID and the Ollama API uses ToolName. The providers ignore the field they do not need.
 type Message struct {
-	Role       MessageRole `json:"role"`                   // "user", "assistant", "system", or "tool"
-	Content    string      `json:"content"`                // Message content
-	ToolName   string      `json:"tool_name,omitempty"`    // Tool name, this is required when role is "tool" for Ollama)
-	ToolCallID string      `json:"tool_call_id,omitempty"` // Tool call ID, this is required when role is "tool" for OpenAI API
+	// Role of the message
+	Role MessageRole `json:"role"`
+	// Content of the message
+	Content string `json:"content"`
+	// ToolName is used by the Ollama API
+	ToolName string `json:"tool_name,omitempty"`
+	// ToolCallID is used by the OpenAI API and vLLM
+	ToolCallID string `json:"tool_call_id,omitempty"`
 }
 
 // ToolCallWithID represents a tool invocation request from the model.
@@ -35,14 +41,6 @@ type Message struct {
 type ToolCallWithID struct {
 	ID                string `json:"id"` // Unique identifier for this tool call
 	McpCallToolParams mcp.CallToolParams
-}
-
-// ToolResultWithID represents the result of a tool execution.
-// It embeds mcp.CallToolResult for MCP compatibility, and adds an ID
-// to match back to the original ToolCall.
-type ToolResultWithID struct {
-	ID                string `json:"id"` // Tool call ID this result corresponds to
-	McpCallToolResult mcp.CallToolResult
 }
 
 type ResponseMetrics struct {
@@ -54,11 +52,10 @@ type ResponseMetrics struct {
 
 // Response represents a model response
 type Response struct {
-	Content     string             `json:"content"`      // Text content from the model
-	Thinking    string             `json:"thinking"`     // Thinking trace from the model (if supported)
-	ToolCalls   []ToolCallWithID   `json:"tool_calls"`   // Tool calls requested by the model
-	ToolResults []ToolResultWithID `json:"tool_results"` // Tool results returned by the model
-	Metrics     *ResponseMetrics   `json:"metrics"`      // Response metrics
+	Content   string           `json:"content"`    // Text content from the model
+	Thinking  string           `json:"thinking"`   // Thinking trace from the model (if supported)
+	ToolCalls []ToolCallWithID `json:"tool_calls"` // Tool calls requested by the model
+	Metrics   *ResponseMetrics `json:"metrics"`    // Response metrics
 }
 
 // InferenceOptions holds per-request inference settings (agent profile knobs).
