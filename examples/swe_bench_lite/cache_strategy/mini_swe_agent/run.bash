@@ -11,7 +11,10 @@ OPENAI_API_KEY="${OPENAI_API_KEY:-sk-no-key-required}"
 MODEL="${MINI_SWE_MODEL:-openai/Qwen/Qwen3-8B}"
 OUTPUT_DIR="mini_swe_agent_preds"
 
-export OPENAI_BASE_URL OPENAI_API_KEY
+# Local/custom models (e.g. Qwen3-8B) aren't in LiteLLM's cost map; avoid RuntimeError.
+MSWEA_COST_TRACKING="${MSWEA_COST_TRACKING:-ignore_errors}"
+
+export OPENAI_BASE_URL OPENAI_API_KEY MSWEA_COST_TRACKING
 
 exec mini-extra swebench \
   --model "$MODEL" \
