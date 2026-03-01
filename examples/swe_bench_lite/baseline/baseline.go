@@ -47,9 +47,9 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 
 	enc := shared.NewPredictionEncoder(outFile)
 
-	for i, inst := range dataset.Instances [{
-		// TEMPORARY: only run one instance
-		if i > 0 {
+	for i, inst := range dataset.Instances {
+		// TEMPORARY: only run first three instances
+		if i > 3 {
 			break
 		}
 
