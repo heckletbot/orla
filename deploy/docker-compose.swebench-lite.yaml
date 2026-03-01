@@ -61,14 +61,14 @@ services:
     entrypoint: ["python3", "-m", "sglang.launch_server"]
     command:
       - "--model-path"
-      - "${SGLANG_LIGHT_MODEL:-Qwen/Qwen3-1.7B}"
+      - "${SGLANG_LIGHT_MODEL:-HuggingFaceTB/SmolLM3-3B}"
       - "--tool-call-parser"
-      - "qwen"
+      - "llama"
       - "--host"
       - "0.0.0.0"
       - "--port"
       - "30000"
-      # Share GPU with sglang: light model (4B) uses less
+      # Share GPU with sglang: light model (3B); SmolLM3 has think/no_think, 128K context
       - "--mem-fraction-static"
       - "${SGLANG_LIGHT_MEM_FRACTION:-0.35}"
     ulimits:
