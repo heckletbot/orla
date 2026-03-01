@@ -24,7 +24,9 @@ const (
 	// DefaultSystemPrompt is the default system message for SWE-bench agent runs.
 	DefaultSystemPrompt = `You are a software engineering agent. You have one tool: run_bash. Use it to run commands in the repository root. You are already in the repository root with the base commit checked out; do not run git clone or git checkout.
 
-You must fix the issue by making tool calls. Do not output the command inside a code block or <think>—actually call the run_bash tool with the "command" argument set to the bash command you want to run (e.g. run_bash with command "cat path/to/file.py"). Edit files with run_bash (e.g. sed, echo, or an editor). The submitted patch is the git diff after your edits.`
+You must fix the issue by making tool calls. Do not output the command inside a code block or <think>—actually call the run_bash tool with the "command" argument set to the bash command you want to run (e.g. run_bash with command "cat path/to/file.py"). Edit files with run_bash (e.g. sed, echo, or an editor). The submitted patch is the git diff after your edits.
+
+Important: Make the code edit first (e.g. sed or echo to change the file), then run git diff to verify. Do not run git diff repeatedly without having made an edit—if the last git diff was empty, your next tool call must be an edit command, not another git diff.`
 	// MaxSteps is the default cap on ReAct steps per instance.
 	MaxSteps = 256
 
