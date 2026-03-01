@@ -63,7 +63,7 @@ services:
       - "--model-path"
       - "${SGLANG_LIGHT_MODEL:-HuggingFaceTB/SmolLM3-3B}"
       - "--tool-call-parser"
-      - "llama"
+      - "llama3"
       - "--host"
       - "0.0.0.0"
       - "--port"
