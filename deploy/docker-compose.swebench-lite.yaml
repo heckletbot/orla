@@ -119,13 +119,14 @@ services:
       - WORKDIR_ROOT=/workdir
       - OUTPUT_PATH=/output/predictions.jsonl
       - METRICS_PATH=/output/metrics.json
+      # Run target when using: docker compose up run (default: baseline). Override: RUN_TARGET=two_stage_mapping docker compose up run
+      - RUN_TARGET=${RUN_TARGET:-baseline}
     volumes:
       - ./output:/output
       - swebench_workdir:/workdir
     depends_on:
       orla:
         condition: service_healthy
-    command: ["baseline"]
 
 volumes:
   sglang_cache: {}
