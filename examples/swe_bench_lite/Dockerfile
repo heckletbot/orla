@@ -31,4 +31,3 @@ ENV OUTPUT_PATH=/output/predictions.jsonl
 WORKDIR /
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["baseline"]
