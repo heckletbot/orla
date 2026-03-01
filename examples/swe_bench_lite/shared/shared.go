@@ -280,6 +280,37 @@ func NewBashTool(getWorkdir func() string) (*orla.Tool, error) {
 	)
 }
 
+// stuckWindow is the number of consecutive identical tool results that triggers a stuck-loop injection.
+const stuckWindow = 3
+
+// stuckReminderMsg is injected when the agent appears stuck in a loop (same tool output N times in a row).
+const stuckReminderMsg = `You appear stuck: your last %d tool calls all returned the same result. Stop repeating the same command. Take stock of what you know, form a specific plan, and try a meaningfully different action. If you have been running git diff and it is empty, you have not edited any file yet — run an edit command (sed -i, tee, patch) to make the actual code change.`
+
+// InjectReminderIfStuck inspects the last stuckWindow tool-result messages. If they are all identical
+// (the agent is looping), it appends a user reminder to break the pattern.
+// Returns the (possibly extended) messages slice.
+func InjectReminderIfStuck(messages []orla.Message) []orla.Message {
+	// Collect the last stuckWindow tool results.
+	var results []string
+	for i := len(messages) - 1; i >= 0 && len(results) < stuckWindow; i-- {
+		if messages[i].Role == "tool" {
+			results = append(results, messages[i].Content)
+		}
+	}
+	if len(results) < stuckWindow {
+		return messages
+	}
+	// Check all are identical.
+	for _, r := range results[1:] {
+		if r != results[0] {
+			return messages
+		}
+	}
+	log.Printf("[loop-guard] %d identical tool results in a row, injecting stuck reminder", stuckWindow)
+	reminder := fmt.Sprintf(stuckReminderMsg, stuckWindow)
+	return append(messages, orla.Message{Role: "user", Content: reminder})
+}
+
 // LogBashCommandsFromResponse logs each run_bash command from the response's tool calls for visibility.
 func LogBashCommandsFromResponse(response *orla.InferenceResponse) {
 	for _, raw := range response.ToolCalls {

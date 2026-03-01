@@ -146,6 +146,7 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 				log.Printf("step %d: tool message: %s", step+1, m.Content)
 				messages = append(messages, *m)
 			}
+			messages = shared.InjectReminderIfStuck(messages)
 		}
 
 		metrics.EndInstance()
