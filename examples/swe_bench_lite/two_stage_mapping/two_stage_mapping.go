@@ -22,7 +22,13 @@ const (
 	// Default light backend URL when running two SGLang services (e.g. sglang + sglang-light).
 	defaultLightURL = "http://sglang-light:30000/v1"
 	// Router prompt: model returns prediction true = light, false = heavy.
-	routerPromptPrefix = "Classify this software engineering task. Output prediction: true if the task is relatively simple or lightweight, false if it is complex or requires heavy reasoning.\n\n"
+	routerPromptPrefix = `You are classifying a software engineering task for routing.
+
+Choose true (light) when the fix is likely: a single file or few lines, a clear bug (typo, wrong constant, off-by-one), config/test/doc tweak, or the issue description points to an obvious location.
+
+Choose false (heavy) when the fix likely needs: multiple files, deep reasoning to find root cause, design/API changes, or many reasoning steps.
+
+When unsure, prefer true (light). Output prediction: `
 )
 
 // Run loads the dataset, registers light and heavy backends, and for each instance:
