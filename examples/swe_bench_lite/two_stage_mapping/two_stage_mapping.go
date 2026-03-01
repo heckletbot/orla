@@ -63,8 +63,10 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 
 	lightStage := orla.NewAgentStage("light", lightBackend)
 	heavyStage := orla.NewAgentStage("heavy", heavyBackend)
-	lightStage.SetTemperature(0) // reproducibility
+	lightStage.SetTemperature(0)
 	heavyStage.SetTemperature(0)
+	lightStage.SetMaxTokens(shared.MaxOutputTokens)
+	heavyStage.SetMaxTokens(shared.MaxOutputTokens)
 
 	var currentWorkdir string
 	bashTool, bashToolErr := shared.NewBashTool(func() string { return currentWorkdir })
@@ -99,7 +101,7 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 	}()
 
 	for i, inst := range dataset.Instances {
-		if i > 10 {
+		if i >= shared.MaxIterations {
 			break
 		}
 

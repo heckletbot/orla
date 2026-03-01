@@ -28,7 +28,8 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 
 	agent := orla.NewAgent(client)
 	stage := orla.NewAgentStage("baseline", backend)
-	stage.SetTemperature(0) // reproducibility
+	stage.SetTemperature(0)
+	stage.SetMaxTokens(shared.MaxOutputTokens)
 	var currentWorkdir string
 	bashTool, err := shared.NewBashTool(func() string { return currentWorkdir })
 	if err != nil {
@@ -57,8 +58,7 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 	}()
 
 	for i, inst := range dataset.Instances {
-		// TEMPORARY: only run first three instances
-		if i > 10 {
+		if i >= shared.MaxIterations {
 			break
 		}
 

@@ -22,13 +22,27 @@ import (
 
 const (
 	// DefaultSystemPrompt is the default system message for SWE-bench agent runs.
-	DefaultSystemPrompt = `You are a software engineering agent. You have one tool: run_bash. Use it to run commands in the repository root. You are already in the repository root with the base commit checked out; do not run git clone or git checkout.
+	DefaultSystemPrompt = `You are a software engineering agent. You have one tool: run_bash. You are already in the repository root with the base commit checked out.
 
-You must fix the issue by making tool calls. Do not output the command inside a code block or <think>—actually call the run_bash tool with the "command" argument set to the bash command you want to run (e.g. run_bash with command "cat path/to/file.py"). Edit files with run_bash (e.g. sed, echo, or an editor). The submitted patch is the git diff after your edits.
+Follow this workflow:
+1. FIND: Use grep -rn or find to locate the relevant file(s). Then use cat or sed -n to read the specific lines you need to change.
+2. EDIT: Make the change. Prefer a Python one-liner or heredoc over sed for multi-line or complex edits:
+   python3 -c "
+   import pathlib; p = pathlib.Path('file.py'); t = p.read_text()
+   t = t.replace('old_code', 'new_code'); p.write_text(t)"
+   sed -i works for simple single-line substitutions, but note: sed -i returns exit code 0 even if the pattern did not match—always verify.
+3. VERIFY: Run git diff to confirm your edit. If git diff is empty, your edit did not apply—re-read the file to check the exact text, then retry with corrected arguments.
 
-Important: Make the code edit first (e.g. sed or echo to change the file), then run git diff to verify. Do not run git diff repeatedly without having made an edit—if the last git diff was empty, your next tool call must be an edit command, not another git diff.`
+Rules:
+- Call run_bash with the "command" argument for every action. Do not write commands in code blocks.
+- Do not run git clone or git checkout.
+- Keep edits minimal and targeted.
+- The submitted patch is the git diff after your edits.`
 	// MaxSteps is the default cap on ReAct steps per instance.
-	MaxSteps = 256
+	MaxSteps        = 256
+	MaxOutputTokens = 4096
+
+	MaxIterations = 10
 
 	// Fixed paths/URLs for the Docker compose setup.
 	OrlaURL     = "http://orla:8081"
@@ -40,7 +54,8 @@ Important: Make the code edit first (e.g. sed or echo to change the file), then 
 	MetricsPath = "/output/metrics.json"
 
 	// MaxToolOutputBytes caps run_bash stdout/stderr so huge outputs don't blow context.
-	MaxToolOutputBytes = 512
+	// 8KB gives the model enough to read meaningful code while staying within context limits.
+	MaxToolOutputBytes = 8192
 )
 
 // SWEBenchLiteInstance is one instance from the dataset (instance_id, repo, base_commit, problem_statement).
@@ -262,9 +277,12 @@ func NewBashTool(getWorkdir func() string) (*orla.Tool, error) {
 			workdir := getWorkdir()
 			cmd := exec.CommandContext(ctx, "bash", "-c", cmdStr)
 			cmd.Dir = workdir
-			out, err := cmd.CombinedOutput()
-			stdout := truncateForContext(string(out), MaxToolOutputBytes)
-			stderr := ""
+			var stdoutBuf, stderrBuf bytes.Buffer
+			cmd.Stdout = &stdoutBuf
+			cmd.Stderr = &stderrBuf
+			err := cmd.Run()
+			stdout := truncateForContext(stdoutBuf.String(), MaxToolOutputBytes)
+			stderr := truncateForContext(stderrBuf.String(), MaxToolOutputBytes)
 			exitCode := 0
 			if err != nil {
 				var exitErr *exec.ExitError
