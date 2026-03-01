@@ -135,7 +135,7 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 				log.Printf("step %d: model finished", step+1)
 				break
 			}
-			messages = append(messages, orla.Message{Role: "assistant", Content: resp.Content})
+			messages = append(messages, orla.Message{Role: "assistant", Content: shared.StripThinking(resp.Content)})
 			shared.LogBashCommandsFromResponse(resp)
 			toolMessages, err := agent.RunToolCallsInResponse(ctx, resp)
 			if err != nil {
@@ -146,7 +146,6 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 				log.Printf("step %d: tool message: %s", step+1, m.Content)
 				messages = append(messages, *m)
 			}
-			messages = shared.InjectReminderIfStuck(messages)
 		}
 
 		metrics.EndInstance()

@@ -280,35 +280,24 @@ func NewBashTool(getWorkdir func() string) (*orla.Tool, error) {
 	)
 }
 
-// stuckWindow is the number of consecutive identical tool results that triggers a stuck-loop injection.
-const stuckWindow = 3
-
-// stuckReminderMsg is injected when the agent appears stuck in a loop (same tool output N times in a row).
-const stuckReminderMsg = `You appear stuck: your last %d tool calls all returned the same result. Stop repeating the same command. Take stock of what you know, form a specific plan, and try a meaningfully different action. If you have been running git diff and it is empty, you have not edited any file yet — run an edit command (sed -i, tee, patch) to make the actual code change.`
-
-// InjectReminderIfStuck inspects the last stuckWindow tool-result messages. If they are all identical
-// (the agent is looping), it appends a user reminder to break the pattern.
-// Returns the (possibly extended) messages slice.
-func InjectReminderIfStuck(messages []orla.Message) []orla.Message {
-	// Collect the last stuckWindow tool results.
-	var results []string
-	for i := len(messages) - 1; i >= 0 && len(results) < stuckWindow; i-- {
-		if messages[i].Role == "tool" {
-			results = append(results, messages[i].Content)
+// StripThinking removes <think>...</think> blocks from model output so they are not fed back
+// into the conversation history. Qwen3's thinking blocks are internal reasoning and should not
+// accumulate in context — they bloat the context window and cause the model to repeat itself.
+func StripThinking(content string) string {
+	s := content
+	for {
+		start := strings.Index(s, "<think>")
+		if start < 0 {
+			break
 		}
-	}
-	if len(results) < stuckWindow {
-		return messages
-	}
-	// Check all are identical.
-	for _, r := range results[1:] {
-		if r != results[0] {
-			return messages
+		end := strings.Index(s[start:], "</think>")
+		if end < 0 {
+			s = s[:start]
+			break
 		}
+		s = s[:start] + s[start+end+len("</think>"):]
 	}
-	log.Printf("[loop-guard] %d identical tool results in a row, injecting stuck reminder", stuckWindow)
-	reminder := fmt.Sprintf(stuckReminderMsg, stuckWindow)
-	return append(messages, orla.Message{Role: "user", Content: reminder})
+	return strings.TrimSpace(s)
 }
 
 // LogBashCommandsFromResponse logs each run_bash command from the response's tool calls for visibility.
