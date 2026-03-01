@@ -61,7 +61,7 @@ services:
     entrypoint: ["python3", "-m", "sglang.launch_server"]
     command:
       - "--model-path"
-      - "${SGLANG_LIGHT_MODEL:-Qwen/Qwen3-4B}"
+      - "${SGLANG_LIGHT_MODEL:-Qwen/Qwen3-1.7B}"
       - "--tool-call-parser"
       - "qwen"
       - "--host"
