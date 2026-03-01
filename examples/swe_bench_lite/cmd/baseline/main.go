@@ -11,6 +11,11 @@ import (
 )
 
 func main() {
+
+	log.Println("================================================")
+	log.Println("Running baseline experiment")
+	log.Println("================================================")
+
 	ctx := context.Background()
 	dataset, err := shared.LoadDataset()
 	if err != nil {
