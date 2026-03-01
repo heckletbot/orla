@@ -97,7 +97,11 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 			patch = p
 		}
 
-		log.Printf("patch: %s", patch[:shared.MaxToolOutputBytes])
+		patchPreview := patch
+		if len(patchPreview) > shared.MaxToolOutputBytes {
+			patchPreview = patch[:shared.MaxToolOutputBytes] + "..."
+		}
+		log.Printf("patch: %s", patchPreview)
 
 		if err := enc.Encode(shared.Prediction{
 			InstanceID:      inst.InstanceID,
