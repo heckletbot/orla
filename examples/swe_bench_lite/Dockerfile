@@ -12,10 +12,12 @@ RUN go mod download
 COPY . .
 # Build each experiment binary; add more lines as experiments are added.
 RUN CGO_ENABLED=0 go build -o /build/baseline ./examples/swe_bench_lite/cmd/baseline
+RUN CGO_ENABLED=0 go build -o /build/two_stage_mapping ./examples/swe_bench_lite/cmd/two_stage_mapping
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates bash curl git jq make patch py3-pip python3 unzip
 COPY --from=builder /build/baseline /usr/local/bin/baseline
+COPY --from=builder /build/two_stage_mapping /usr/local/bin/two_stage_mapping
 COPY examples/swe_bench_lite/dataset.zip /tmp/dataset.zip
 RUN unzip -o /tmp/dataset.zip -d /dataset && rm /tmp/dataset.zip
 COPY examples/swe_bench_lite/Makefile /Makefile

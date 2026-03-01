@@ -34,6 +34,8 @@ You must fix the issue by making tool calls. Do not output the command inside a 
 	DatasetRoot = "/dataset/test"
 	WorkdirRoot = "/workdir"
 	OutputPath  = "/output/predictions.jsonl"
+	// MetricsPath is the default path for run metrics (end-to-end, per-instance, per-step). Override with METRICS_PATH.
+	MetricsPath = "/output/metrics.json"
 
 	// MaxToolOutputBytes caps run_bash stdout/stderr so huge outputs don't blow context.
 	MaxToolOutputBytes = 512

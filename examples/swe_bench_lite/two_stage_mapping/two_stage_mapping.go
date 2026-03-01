@@ -1,0 +1,163 @@
+// Package twostagemapping runs the SWE-bench Lite stage-mapping experiment:
+// for each instance, a router (on the heavy model) classifies the task as Light or Heavy,
+// then the main ReAct loop runs on the light model for Light tasks and the heavy model for Heavy tasks.
+package twostagemapping
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"strings"
+
+	orla "github.com/dorcha-inc/orla/pkg/api"
+
+	"github.com/dorcha-inc/orla/examples/swe_bench_lite/shared"
+)
+
+const (
+	// Default heavy (8B) and light (4B) model IDs for stage mapping.
+	heavyModelID = "Qwen/Qwen3-8B"
+	lightModelID = "Qwen/Qwen3-4B"
+	// Default light backend URL when running two SGLang services (e.g. sglang + sglang-light).
+	defaultLightURL = "http://sglang-light:30000/v1"
+	// Router prompt prefix: model returns prediction true = light, false = heavy.
+	routerPromptPrefix = "Classify this software engineering task. Output prediction: true if the task is relatively simple or lightweight, false if it is complex or requires heavy reasoning.\n\n"
+)
+
+// Run loads the dataset, registers light and heavy backends, and for each instance:
+// 1) runs the router (heavy model) to get Light or Heavy,
+// 2) runs the ReAct agent loop on the chosen stage (light or heavy model),
+// 3) appends the prediction to shared.OutputPath.
+func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
+	client := orla.NewOrlaClient(shared.OrlaURL)
+	if err := client.Health(ctx); err != nil {
+		return err
+	}
+
+	heavyURL := os.Getenv("SGLANG_HEAVY_URL")
+	if heavyURL == "" {
+		heavyURL = shared.SGLangURL
+	}
+	lightURL := os.Getenv("SGLANG_LIGHT_URL")
+	if lightURL == "" {
+		lightURL = defaultLightURL
+	}
+
+	heavyBackend := orla.NewSGLangBackend(heavyModelID, heavyURL)
+	if err := client.RegisterBackend(ctx, heavyBackend); err != nil {
+		return fmt.Errorf("register heavy backend: %w", err)
+	}
+
+	lightBackend := orla.NewSGLangBackend(lightModelID, lightURL)
+	if err := client.RegisterBackend(ctx, lightBackend); err != nil {
+		return fmt.Errorf("register light backend: %w", err)
+	}
+
+	lightStage := orla.NewAgentStage("light", lightBackend)
+	heavyStage := orla.NewAgentStage("heavy", heavyBackend)
+
+	var currentWorkdir string
+	bashTool, bashToolErr := shared.NewBashTool(func() string { return currentWorkdir })
+	if bashToolErr != nil {
+		return fmt.Errorf("new bash tool: %w", bashToolErr)
+	}
+
+	if err := lightStage.AddTool(bashTool); err != nil {
+		return fmt.Errorf("add bash tool to light stage: %w", err)
+	}
+	if err := heavyStage.AddTool(bashTool); err != nil {
+		return fmt.Errorf("add bash tool to heavy stage: %w", err)
+	}
+
+	mapper := orla.NewOneBitStageMapper(client, heavyBackend, lightStage, heavyStage)
+	agent := orla.NewAgent(client)
+
+	outFile, err := os.OpenFile(shared.OutputPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("open predictions file: %w", err)
+	}
+	defer shared.LogDeferredError(outFile.Close)
+	enc := shared.NewPredictionEncoder(outFile)
+	metrics := shared.NewRunMetricsRecorder("two_stage_mapping")
+	metrics.BeginRun()
+	defer func() {
+		metrics.EndRun()
+		if err := metrics.Write(""); err != nil {
+			log.Printf("warning: write metrics: %v", err)
+		}
+	}()
+
+	for i, inst := range dataset.Instances {
+		if i > 3 {
+			break
+		}
+
+		absWorkdir, err := shared.PrepareWorkdir(ctx, inst)
+		if err != nil {
+			return fmt.Errorf("prepare workdir: %w", err)
+		}
+		currentWorkdir = absWorkdir
+		log.Printf("running instance %d/%d: %s", i+1, len(dataset.Instances), inst.InstanceID)
+		metrics.BeginInstance(inst.InstanceID)
+
+		routerPrompt := routerPromptPrefix + shared.FormatProblemMessage(inst)
+		stage, err := mapper.MapStage(ctx, routerPrompt)
+		if err != nil {
+			return fmt.Errorf("instance %s map stage: %w", inst.InstanceID, err)
+		}
+
+		log.Printf("instance %s: mapped to stage %s", inst.InstanceID, stage.Name)
+		agent.SetStage(stage)
+
+		messages := shared.PrepareInitialMessages(inst)
+		for step := range shared.MaxSteps {
+			log.Printf("step %d: executing", step+1)
+			metrics.BeginStep(step + 1)
+			resp, err := agent.ExecuteWithMessages(ctx, messages)
+			if err != nil {
+				return fmt.Errorf("step %d execute: %w", step+1, err)
+			}
+			log.Printf("step %d: response: %s", step+1, resp.Content)
+			if len(resp.ToolCalls) == 0 {
+				metrics.EndStep(step + 1)
+				log.Printf("step %d: model finished", step+1)
+				break
+			}
+			messages = append(messages, orla.Message{Role: "assistant", Content: resp.Content})
+			shared.LogBashCommandsFromResponse(resp)
+			toolMessages, err := agent.RunToolCallsInResponse(ctx, resp)
+			if err != nil {
+				return fmt.Errorf("step %d run tools: %w", step+1, err)
+			}
+			metrics.EndStep(step + 1)
+			for _, m := range toolMessages {
+				log.Printf("step %d: tool message: %s", step+1, m.Content)
+				messages = append(messages, *m)
+			}
+		}
+
+		metrics.EndInstance()
+
+		patch := ""
+		if p, ok := shared.PatchFromWorkdir(absWorkdir); ok && strings.TrimSpace(p) != "" {
+			patch = p
+		}
+		patchPreview := patch
+		if len(patchPreview) > shared.MaxToolOutputBytes {
+			patchPreview = patch[:shared.MaxToolOutputBytes] + "..."
+		}
+		log.Printf("patch: %s", patchPreview)
+
+		if err := enc.Encode(shared.Prediction{
+			InstanceID:      inst.InstanceID,
+			ModelNameOrPath: "orla-two-stage",
+			ModelPatch:      patch,
+		}); err != nil {
+			return fmt.Errorf("failed to encode prediction %s: %w", inst.InstanceID, err)
+		}
+	}
+
+	log.Printf("Done. Predictions written to %s, metrics to %s", shared.OutputPath, shared.MetricsPath)
+	return nil
+}

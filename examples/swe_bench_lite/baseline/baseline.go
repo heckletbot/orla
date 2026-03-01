@@ -46,6 +46,14 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 	defer shared.LogDeferredError(outFile.Close)
 
 	enc := shared.NewPredictionEncoder(outFile)
+	metrics := shared.NewRunMetricsRecorder("baseline")
+	metrics.BeginRun()
+	defer func() {
+		metrics.EndRun()
+		if err := metrics.Write(""); err != nil {
+			log.Printf("warning: write metrics: %v", err)
+		}
+	}()
 
 	for i, inst := range dataset.Instances {
 		// TEMPORARY: only run first three instances
@@ -60,11 +68,13 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 
 		currentWorkdir = absWorkdir
 		log.Printf("running instance %d/%d: %s", i+1, len(dataset.Instances), inst.InstanceID)
+		metrics.BeginInstance(inst.InstanceID)
 
 		messages := shared.PrepareInitialMessages(inst)
 
 		for step := range shared.MaxSteps {
 			log.Printf("step %d: executing", step+1)
+			metrics.BeginStep(step + 1)
 
 			resp, err := agent.ExecuteWithMessages(ctx, messages)
 
@@ -75,6 +85,7 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 			log.Printf("step %d: response: %s", step+1, resp.Content)
 
 			if len(resp.ToolCalls) == 0 {
+				metrics.EndStep(step + 1)
 				log.Printf("step %d: model finished", step+1)
 				break
 			}
@@ -86,11 +97,14 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 				return fmt.Errorf("step %d run tools: %w", step+1, err)
 			}
 
+			metrics.EndStep(step + 1)
 			for _, m := range toolMessages {
 				log.Printf("step %d: tool message: %s", step+1, m.Content)
 				messages = append(messages, *m)
 			}
 		}
+
+		metrics.EndInstance()
 
 		patch := ""
 		if p, ok := shared.PatchFromWorkdir(absWorkdir); ok && strings.TrimSpace(p) != "" {
@@ -112,6 +126,7 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 		}
 	}
 
-	log.Printf("Done. Predictions written to %s", shared.OutputPath)
+	log.Printf("Done. Predictions written to %s, metrics to %s", shared.OutputPath, shared.MetricsPath)
 	return nil
 }
+

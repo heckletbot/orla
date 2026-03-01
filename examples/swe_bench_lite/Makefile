@@ -3,3 +3,6 @@
 
 baseline:
 	exec baseline
+
+two_stage_mapping:
+	exec two_stage_mapping
