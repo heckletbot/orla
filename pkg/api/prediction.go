@@ -25,10 +25,12 @@ type OneBitPredictor struct {
 }
 
 // NewOneBitPredictor returns a new OneBitPredictor.
+// The predictor uses temperature 0 for deterministic classification.
 func NewOneBitPredictor(client *OrlaClient, backend *LLMBackend) *OneBitPredictor {
 	agent := NewAgent(client)
 	stage := NewAgentStage("one_bit_predictor", backend)
 	stage.SetResponseFormat(oneBitPredictorResponseFormat)
+	stage.SetTemperature(0)
 	agent.SetStage(stage)
 	return &OneBitPredictor{Agent: agent}
 }

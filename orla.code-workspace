@@ -7,10 +7,10 @@
 			"path": "../orla-paper"
 		},
 		{
-			"path": "../harvard-agentic-system"
+			"path": "../orlaserver.github.io"
 		},
 		{
-			"path": "../orlaserver.github.io"
+			"path": "../orla-eval-results"
 		}
 	],
 	"settings": {

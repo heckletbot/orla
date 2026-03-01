@@ -21,8 +21,16 @@ const (
 	lightModelID = "Qwen/Qwen3-4B"
 	// Default light backend URL when running two SGLang services (e.g. sglang + sglang-light).
 	defaultLightURL = "http://sglang-light:30000/v1"
-	// Router prompt prefix: model returns prediction true = light, false = heavy.
-	routerPromptPrefix = "Classify this software engineering task. Output prediction: true if the task is relatively simple or lightweight, false if it is complex or requires heavy reasoning.\n\n"
+	// Router prompt: clear criteria and examples so the model returns prediction true = light, false = heavy.
+	routerPromptPrefix = `You are classifying a software engineering task for routing.
+
+Rules:
+- Output prediction: true (LIGHT) only if the fix is likely a single-file change, typo, config/docs only, or an obvious one-line/short fix.
+- Output prediction: false (HEAVY) if the task involves multi-file changes, API or design changes, non-obvious bugs, or needs multi-step reasoning.
+
+Classify the following task. Reply with a single JSON object: {"prediction": true} or {"prediction": false}.
+
+`
 )
 
 // Run loads the dataset, registers light and heavy backends, and for each instance:
@@ -70,8 +78,8 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 		return fmt.Errorf("add bash tool to heavy stage: %w", err)
 	}
 
-	// Router runs on the light model (simple binary classification); ReAct loop uses light or heavy per instance.
-	mapper := orla.NewOneBitStageMapper(client, lightBackend, lightStage, heavyStage)
+	// Router runs on the heavy model for more accurate light/heavy classification.
+	mapper := orla.NewOneBitStageMapper(client, heavyBackend, lightStage, heavyStage)
 	agent := orla.NewAgent(client)
 
 	outFile, err := os.OpenFile(shared.OutputPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
@@ -108,7 +116,7 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 			return fmt.Errorf("instance %s map stage: %w", inst.InstanceID, err)
 		}
 
-		log.Printf("instance %s: mapped to stage %s", inst.InstanceID, stage.Name)
+		log.Printf("instance %s: router => %s (prompt_len=%d)", inst.InstanceID, stage.Name, len(routerPrompt))
 		metrics.SetMappedStage(stage.Name)
 		agent.SetStage(stage)
 
