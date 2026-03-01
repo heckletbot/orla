@@ -22,9 +22,9 @@ import (
 
 const (
 	// DefaultSystemPrompt is the default system message for SWE-bench agent runs.
-	DefaultSystemPrompt = `You are a software engineering agent. You have access to a bash shell to run commands.
-Your task is to fix the issue described in the problem statement. Edit the repository files using the run_bash tool (e.g. use sed/cat to change files). Work in the repository root.
-The submitted patch is the git diff of the repository after your edits; Use the run_bash tool to execute commands. Each tool call runs a single bash command.`
+	DefaultSystemPrompt = `You are a software engineering agent. You have one tool: run_bash. Use it to run commands in the repository root.
+
+You must fix the issue by making tool calls. Do not output the command inside a code block or <think>—actually call the run_bash tool with the "command" argument set to the bash command you want to run (e.g. run_bash with command "cat path/to/file.py"). Edit files with run_bash (e.g. sed, echo, or an editor). The submitted patch is the git diff after your edits.`
 	// MaxSteps is the default cap on ReAct steps per instance.
 	MaxSteps = 256
 
@@ -150,7 +150,7 @@ func EnsureRepo(ctx context.Context, workdir, repo, baseCommit string) error {
 		}
 	}
 
-	fetch := exec.CommandContext(ctx, "git", "fetch", "origin", baseCommit)
+	fetch := exec.CommandContext(ctx, "git", "fetch", "--quiet", "origin", baseCommit)
 	fetch.Dir = workdir
 	fetch.Stdout = os.Stdout
 	fetch.Stderr = os.Stderr
@@ -159,12 +159,21 @@ func EnsureRepo(ctx context.Context, workdir, repo, baseCommit string) error {
 		return fmt.Errorf("git fetch %s: %w", baseCommit, err)
 	}
 
-	checkout := exec.CommandContext(ctx, "git", "checkout", baseCommit)
+	checkout := exec.CommandContext(ctx, "git", "checkout", "-q", baseCommit)
 	checkout.Dir = workdir
 	checkout.Stdout = os.Stdout
 	checkout.Stderr = os.Stderr
 	if err := checkout.Run(); err != nil {
 		return fmt.Errorf("git checkout %s: %w", baseCommit, err)
+	}
+
+	// Force clean working tree (avoids submitting leftover changes from a previous run).
+	reset := exec.CommandContext(ctx, "git", "reset", "--hard", "-q", baseCommit)
+	reset.Dir = workdir
+	reset.Stdout = os.Stdout
+	reset.Stderr = os.Stderr
+	if err := reset.Run(); err != nil {
+		return fmt.Errorf("git reset --hard %s: %w", baseCommit, err)
 	}
 	return nil
 }

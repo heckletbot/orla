@@ -14,7 +14,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /build/baseline ./examples/swe_bench_lite/cmd/baseline
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates bash git make unzip
+RUN apk add --no-cache ca-certificates bash curl git jq make patch py3-pip python3 unzip
 COPY --from=builder /build/baseline /usr/local/bin/baseline
 COPY examples/swe_bench_lite/dataset.zip /tmp/dataset.zip
 RUN unzip -o /tmp/dataset.zip -d /dataset && rm /tmp/dataset.zip
