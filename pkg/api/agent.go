@@ -32,12 +32,14 @@ func (a *Agent) req(prompt string) (*ExecuteRequest, error) {
 	}
 
 	s := a.Stage
-	r := &ExecuteRequest{Backend: s.LLMBackend.Name, Prompt: prompt}
+	r := &ExecuteRequest{Backend: s.LLMBackend.Name, Stage: s.Name, Prompt: prompt}
 	r.MaxTokens = s.MaxTokens
 	r.Temperature = s.Temperature
 	r.TopP = s.TopP
 	r.ResponseFormat = s.ResponseFormat
 	r.ChatTemplateKwargs = s.ChatTemplateKwargs
+	r.SchedulingPolicy = s.SchedulingPolicy
+	r.SchedulingHints = s.SchedulingHints
 	return r, nil
 }
 
@@ -48,12 +50,14 @@ func (a *Agent) reqWithMessages(messages []Message) (*ExecuteRequest, error) {
 	}
 
 	s := a.Stage
-	r := &ExecuteRequest{Backend: s.LLMBackend.Name, Messages: messages}
+	r := &ExecuteRequest{Backend: s.LLMBackend.Name, Stage: s.Name, Messages: messages}
 	r.MaxTokens = s.MaxTokens
 	r.Temperature = s.Temperature
 	r.TopP = s.TopP
 	r.ResponseFormat = s.ResponseFormat
 	r.ChatTemplateKwargs = s.ChatTemplateKwargs
+	r.SchedulingPolicy = s.SchedulingPolicy
+	r.SchedulingHints = s.SchedulingHints
 
 	if len(a.Stage.Tools) > 0 {
 		r.Tools = a.toolsToMCP()

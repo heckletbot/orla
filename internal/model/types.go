@@ -53,6 +53,38 @@ type ResponseMetrics struct {
 	PromptTokens int `json:"prompt_tokens,omitempty"`
 	// CompletionTokens is the number of tokens generated (output). Reported by the backend.
 	CompletionTokens int `json:"completion_tokens,omitempty"`
+	// QueueWaitMs is the time spent waiting in Orla's backend scheduler queue.
+	QueueWaitMs int64 `json:"queue_wait_ms,omitempty"`
+	// SchedulerDecisionMs is the time spent selecting the next request in the scheduler.
+	SchedulerDecisionMs int64 `json:"scheduler_decision_ms,omitempty"`
+	// DispatchMs is the request dispatch/setup time between scheduler dequeue and provider return.
+	DispatchMs int64 `json:"dispatch_ms,omitempty"`
+	// BackendLatencyMs is end-to-end backend latency for non-streaming calls.
+	BackendLatencyMs int64 `json:"backend_latency_ms,omitempty"`
+}
+
+// SchedulingPolicy controls how the server dequeues requests for each backend.
+type SchedulingPolicy string
+
+const (
+	// SchedulingPolicyFCFS is first-come-first-served scheduling.
+	SchedulingPolicyFCFS SchedulingPolicy = "fcfs"
+	// SchedulingPolicyPriority prioritizes stage heads with higher priority values.
+	SchedulingPolicyPriority SchedulingPolicy = "priority"
+)
+
+// SchedulingHints are optional policy-specific hints attached to an inference request.
+type SchedulingHints struct {
+	// Priority is optional and used by priority-based scheduling policies.
+	Priority *int `json:"priority,omitempty"`
+}
+
+// GetPriority returns the priority score or 0 when unset.
+func (h *SchedulingHints) GetPriority() int {
+	if h == nil || h.Priority == nil {
+		return 0
+	}
+	return *h.Priority
 }
 
 // Response represents a model response
@@ -85,6 +117,18 @@ type InferenceOptions struct {
 	ResponseFormat *StructuredOutputOptions `json:"response_format,omitempty"`
 	// ChatTemplateKwargs are extra kwargs passed to the chat template renderer
 	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
+	// SchedulingPolicy selects backend queue scheduling behavior.
+	SchedulingPolicy SchedulingPolicy `json:"scheduling_policy,omitempty"`
+	// SchedulingHints are optional policy hints for backend queueing.
+	SchedulingHints *SchedulingHints `json:"scheduling_hints,omitempty"`
+}
+
+// GetSchedulingPolicy returns the configured scheduling policy or the FCFS default.
+func (o InferenceOptions) GetSchedulingPolicy() SchedulingPolicy {
+	if o.SchedulingPolicy == "" {
+		return SchedulingPolicyFCFS
+	}
+	return o.SchedulingPolicy
 }
 
 // Provider is the interface that all model providers must implement

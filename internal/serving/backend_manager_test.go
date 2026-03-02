@@ -14,6 +14,7 @@ func TestNewLLMServerManager(t *testing.T) {
 	require.NotNil(t, manager)
 	assert.NotNil(t, manager.backends)
 	assert.NotNil(t, manager.providers)
+	assert.NotNil(t, manager.executors)
 }
 
 func TestLLMServerManager_AddServer(t *testing.T) {

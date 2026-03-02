@@ -409,6 +409,12 @@ func RunAgentLoop(ctx context.Context, agent *orla.Agent, messages []orla.Messag
 		content := resp.Content
 		if resp.Metrics != nil {
 			recorder.RecordStepTokens(resp.Metrics.PromptTokens, resp.Metrics.CompletionTokens)
+			recorder.RecordStepOrlaOverhead(
+				resp.Metrics.QueueWaitMs,
+				resp.Metrics.SchedulerDecisionMs,
+				resp.Metrics.DispatchMs,
+				resp.Metrics.BackendLatencyMs,
+			)
 		}
 		log.Printf("step %d: response: %s", step+1, truncateForLog(content, 500))
 

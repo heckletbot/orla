@@ -77,6 +77,7 @@ func (s *AgenticServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 // Inference options (stream, max_tokens, temperature, top_p) are embedded so the JSON body stays flat.
 type ExecuteRequest struct {
 	Backend  string          `json:"backend"`
+	Stage    string          `json:"stage,omitempty"`
 	Prompt   string          `json:"prompt,omitempty"`
 	Messages []model.Message `json:"messages,omitempty"`
 	Tools    []*mcp.Tool     `json:"tools,omitempty"`
@@ -112,13 +113,20 @@ func (s *AgenticServer) handleExecute(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	opts := req.InferenceOptions
-
-	if req.Stream {
-		s.handleExecuteStream(w, ctx, req.Backend, messages, req.Tools, opts)
+	switch opts.GetSchedulingPolicy() {
+	case model.SchedulingPolicyFCFS, model.SchedulingPolicyPriority:
+		// supported
+	default:
+		http.Error(w, fmt.Sprintf("unsupported scheduling policy %q", opts.SchedulingPolicy), http.StatusBadRequest)
 		return
 	}
 
-	response, err := s.layer.Execute(ctx, req.Backend, messages, req.Tools, opts)
+	if req.Stream {
+		s.handleExecuteStream(w, ctx, req.Backend, req.Stage, messages, req.Tools, opts)
+		return
+	}
+
+	response, err := s.layer.Execute(ctx, req.Backend, req.Stage, messages, req.Tools, opts)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -141,8 +149,8 @@ func (s *AgenticServer) handleExecute(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *AgenticServer) handleExecuteStream(w http.ResponseWriter, ctx context.Context, backend string, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) {
-	response, eventCh, err := s.layer.ExecuteStream(ctx, backend, messages, tools, opts)
+func (s *AgenticServer) handleExecuteStream(w http.ResponseWriter, ctx context.Context, backend, stage string, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) {
+	response, eventCh, err := s.layer.ExecuteStream(ctx, backend, stage, messages, tools, opts)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)

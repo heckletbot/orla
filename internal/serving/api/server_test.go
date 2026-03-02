@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/dorcha-inc/orla/internal/model"
 	"github.com/dorcha-inc/orla/internal/serving"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -76,6 +77,27 @@ func TestServer_HandleExecute_BackendNotFound(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, result.Success)
 	assert.Contains(t, result.Error, "not found")
+}
+
+func TestServer_HandleExecute_InvalidSchedulingPolicy(t *testing.T) {
+	layer := serving.NewAgenticLayer()
+	server := NewAgenticServer(layer, ":0")
+
+	reqBody := ExecuteRequest{
+		Backend: "nonexistent",
+		Prompt:  "test prompt",
+		InferenceOptions: model.InferenceOptions{
+			SchedulingPolicy: "not_supported",
+		},
+	}
+	body, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/execute", bytes.NewReader(body))
+	server.mux.ServeHTTP(resp, req)
+
+	require.Equal(t, http.StatusBadRequest, resp.Code)
 }
 
 func TestServer_HandleRegisterBackend(t *testing.T) {

@@ -18,31 +18,36 @@ import (
 type StepRecorder interface {
 	BeginStep(stepIndex int)
 	RecordStepTokens(promptTokens, completionTokens int)
+	RecordStepOrlaOverhead(queueWaitMs, schedulerDecisionMs, dispatchMs, backendLatencyMs int64)
 	EndStep(stepIndex int)
 }
 
 // StepMetrics is the timing and token usage for one ReAct step (one inference + command execution).
 type StepMetrics struct {
-	StepIndex        int   `json:"step_index"`
-	StartTime        int64 `json:"start_time_ms"`
-	EndTime          int64 `json:"end_time_ms"`
-	DurationMs       int64 `json:"duration_ms"`
-	PromptTokens     int   `json:"prompt_tokens,omitempty"`
-	CompletionTokens int   `json:"completion_tokens,omitempty"`
+	StepIndex           int   `json:"step_index"`
+	StartTime           int64 `json:"start_time_ms"`
+	EndTime             int64 `json:"end_time_ms"`
+	DurationMs          int64 `json:"duration_ms"`
+	PromptTokens        int   `json:"prompt_tokens,omitempty"`
+	CompletionTokens    int   `json:"completion_tokens,omitempty"`
+	QueueWaitMs         int64 `json:"queue_wait_ms,omitempty"`
+	SchedulerDecisionMs int64 `json:"scheduler_decision_ms,omitempty"`
+	DispatchMs          int64 `json:"dispatch_ms,omitempty"`
+	BackendLatencyMs    int64 `json:"backend_latency_ms,omitempty"`
 }
 
 // InstanceMetrics is the timing and token usage for one SWE-bench instance (all ReAct steps).
 // MappedStage is set by experiments that do stage mapping (e.g. "light", "heavy"); empty for baseline.
 type InstanceMetrics struct {
-	InstanceID       string        `json:"instance_id"`
-	MappedStage      string        `json:"mapped_stage,omitempty"`
-	StartTime        int64         `json:"start_time_ms"`
-	EndTime          int64         `json:"end_time_ms"`
-	DurationMs       int64         `json:"duration_ms"`
-	Steps            []StepMetrics `json:"steps"`
-	StepsCount       int           `json:"steps_count"`
-	TotalPromptTokens     int      `json:"total_prompt_tokens"`
-	TotalCompletionTokens int      `json:"total_completion_tokens"`
+	InstanceID            string        `json:"instance_id"`
+	MappedStage           string        `json:"mapped_stage,omitempty"`
+	StartTime             int64         `json:"start_time_ms"`
+	EndTime               int64         `json:"end_time_ms"`
+	DurationMs            int64         `json:"duration_ms"`
+	Steps                 []StepMetrics `json:"steps"`
+	StepsCount            int           `json:"steps_count"`
+	TotalPromptTokens     int           `json:"total_prompt_tokens"`
+	TotalCompletionTokens int           `json:"total_completion_tokens"`
 }
 
 // RunMetrics is the full run: end-to-end time, token usage, and per-instance (and per-step) metrics.
@@ -60,7 +65,7 @@ type RunMetrics struct {
 // InstanceRecorder records metrics for a single instance. Use in parallel workers; when done, call
 // EndInstance() and add the returned InstanceMetrics to RunMetricsRecorder via AddInstance.
 type InstanceRecorder struct {
-	inst     InstanceMetrics
+	inst      InstanceMetrics
 	stepStart time.Time
 }
 
@@ -91,6 +96,18 @@ func (r *InstanceRecorder) RecordStepTokens(promptTokens, completionTokens int) 
 	last := &r.inst.Steps[len(r.inst.Steps)-1]
 	last.PromptTokens = promptTokens
 	last.CompletionTokens = completionTokens
+}
+
+// RecordStepOrlaOverhead implements StepRecorder.
+func (r *InstanceRecorder) RecordStepOrlaOverhead(queueWaitMs, schedulerDecisionMs, dispatchMs, backendLatencyMs int64) {
+	if len(r.inst.Steps) == 0 {
+		return
+	}
+	last := &r.inst.Steps[len(r.inst.Steps)-1]
+	last.QueueWaitMs = queueWaitMs
+	last.SchedulerDecisionMs = schedulerDecisionMs
+	last.DispatchMs = dispatchMs
+	last.BackendLatencyMs = backendLatencyMs
 }
 
 // EndStep implements StepRecorder.
@@ -233,6 +250,18 @@ func (r *RunMetricsRecorder) RecordStepTokens(promptTokens, completionTokens int
 	last := &r.current.Steps[len(r.current.Steps)-1]
 	last.PromptTokens = promptTokens
 	last.CompletionTokens = completionTokens
+}
+
+// RecordStepOrlaOverhead records per-step scheduler/dispatch metrics.
+func (r *RunMetricsRecorder) RecordStepOrlaOverhead(queueWaitMs, schedulerDecisionMs, dispatchMs, backendLatencyMs int64) {
+	if r.current == nil || len(r.current.Steps) == 0 {
+		return
+	}
+	last := &r.current.Steps[len(r.current.Steps)-1]
+	last.QueueWaitMs = queueWaitMs
+	last.SchedulerDecisionMs = schedulerDecisionMs
+	last.DispatchMs = dispatchMs
+	last.BackendLatencyMs = backendLatencyMs
 }
 
 // EndStep ends timing for the current step. Call after command execution.

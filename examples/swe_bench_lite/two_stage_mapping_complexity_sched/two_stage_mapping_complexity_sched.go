@@ -1,7 +1,6 @@
-// Package twostagemapping runs the SWE-bench Lite stage-mapping experiment:
-// for each instance, a router (on the light model) classifies the task as Light or Heavy,
-// then the main ReAct loop runs on the light model for Light tasks and the heavy model for Heavy tasks.
-package twostagemapping
+// Package twostagemappingcomplexitysched runs the SWE-bench Lite two-stage mapping
+// experiment with backend scheduling policies enabled.
+package twostagemappingcomplexitysched
 
 import (
 	"context"
@@ -73,6 +72,9 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 
 	lightStage := orla.NewAgentStage("light", lightBackend)
 	heavyStage := orla.NewAgentStage("heavy", heavyBackend)
+	// Scheduling experiment: keep light queue FCFS; prioritize heavy-stage requests by priority.
+	lightStage.SetSchedulingPolicy(orla.SchedulingPolicyFCFS)
+	heavyStage.SetSchedulingPolicy(orla.SchedulingPolicyPriority)
 	lightStage.SetTemperature(0.7)
 	heavyStage.SetTemperature(0.7)
 	lightStage.SetMaxTokens(shared.MaxOutputTokens)
@@ -93,7 +95,7 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 	defer shared.LogDeferredError(outFile.Close)
 	enc := shared.NewPredictionEncoder(outFile)
 	var encMu sync.Mutex
-	metrics := shared.NewRunMetricsRecorder("two_stage_mapping")
+	metrics := shared.NewRunMetricsRecorder("two_stage_mapping_complexity_sched")
 	metrics.BeginRun()
 	defer func() {
 		metrics.EndRun()
@@ -150,7 +152,7 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 		encMu.Lock()
 		err = enc.Encode(shared.Prediction{
 			InstanceID:      inst.InstanceID,
-			ModelNameOrPath: "orla-two-stage",
+			ModelNameOrPath: "orla-two-stage-complexity-sched",
 			ModelPatch:      patch,
 		})
 		if err != nil {

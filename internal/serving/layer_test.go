@@ -58,7 +58,7 @@ func TestLayer_Execute_WithMaxTokens(t *testing.T) {
 	layer.llmBackendManager.providers["test-server"] = mock
 	layer.llmBackendManager.mu.Unlock()
 
-	response, err := layer.Execute(context.Background(), "test-server", []model.Message{
+	response, err := layer.Execute(context.Background(), "test-server", "test", []model.Message{
 		{Role: model.MessageRoleUser, Content: "test prompt"},
 	}, nil, model.InferenceOptions{MaxTokens: core.IntPtr(42)})
 	require.NoError(t, err)
@@ -80,7 +80,7 @@ func TestLayer_Execute_WithoutMaxTokens(t *testing.T) {
 	layer.llmBackendManager.providers["test-server"] = mock
 	layer.llmBackendManager.mu.Unlock()
 
-	response, err := layer.Execute(context.Background(), "test-server", []model.Message{
+	response, err := layer.Execute(context.Background(), "test-server", "test", []model.Message{
 		{Role: model.MessageRoleUser, Content: "test prompt"},
 	}, nil, model.InferenceOptions{})
 	require.NoError(t, err)
@@ -90,7 +90,7 @@ func TestLayer_Execute_WithoutMaxTokens(t *testing.T) {
 
 func TestLayer_Execute_ServerNotFound(t *testing.T) {
 	layer := NewAgenticLayer()
-	_, err := layer.Execute(context.Background(), "nonexistent", nil, nil, model.InferenceOptions{})
+	_, err := layer.Execute(context.Background(), "nonexistent", "", nil, nil, model.InferenceOptions{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -102,7 +102,7 @@ func TestLayer_Execute_RejectsStream(t *testing.T) {
 		Endpoint: "http://localhost:11434",
 	}, "ollama:test-model")
 
-	_, err := layer.Execute(context.Background(), "test-server", []model.Message{
+	_, err := layer.Execute(context.Background(), "test-server", "test", []model.Message{
 		{Role: model.MessageRoleUser, Content: "test"},
 	}, nil, model.InferenceOptions{Stream: true})
 	require.Error(t, err)
@@ -121,7 +121,7 @@ func TestLayer_ExecuteStream(t *testing.T) {
 	layer.llmBackendManager.providers["test-server"] = mock
 	layer.llmBackendManager.mu.Unlock()
 
-	response, ch, err := layer.ExecuteStream(context.Background(), "test-server", []model.Message{
+	response, ch, err := layer.ExecuteStream(context.Background(), "test-server", "test", []model.Message{
 		{Role: model.MessageRoleUser, Content: "test"},
 	}, nil, model.InferenceOptions{Stream: true, MaxTokens: core.IntPtr(10)})
 	require.NoError(t, err)

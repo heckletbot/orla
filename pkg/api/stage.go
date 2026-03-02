@@ -21,6 +21,10 @@ type AgentStage struct {
 	ResponseFormat *StructuredOutputRequest
 	// ChatTemplateKwargs are extra kwargs passed to the chat template renderer (e.g. SGLang/vLLM).
 	ChatTemplateKwargs map[string]any
+	// SchedulingPolicy configures server-side backend queue scheduling for requests in this stage.
+	SchedulingPolicy string
+	// SchedulingHints are optional policy hints for this stage.
+	SchedulingHints *SchedulingHints
 	// Tools are the tools available in this stage (e.g. different stages can expose different tool sets).
 	Tools map[string]*Tool
 }
@@ -45,6 +49,12 @@ func (s *AgentStage) SetResponseFormat(r *StructuredOutputRequest) { s.ResponseF
 // SetChatTemplateKwargs sets extra kwargs for the chat template renderer
 func (s *AgentStage) SetChatTemplateKwargs(kwargs map[string]any) { s.ChatTemplateKwargs = kwargs }
 
+// SetSchedulingPolicy configures server-side scheduling policy for this stage's requests.
+func (s *AgentStage) SetSchedulingPolicy(policy string) { s.SchedulingPolicy = policy }
+
+// SetSchedulingHints sets optional server scheduling hints for this stage.
+func (s *AgentStage) SetSchedulingHints(hints *SchedulingHints) { s.SchedulingHints = hints }
+
 // AddTool adds a tool to this stage. Returns an error if t is nil.
 func (s *AgentStage) AddTool(t *Tool) error {
 	if t == nil {
@@ -52,6 +62,11 @@ func (s *AgentStage) AddTool(t *Tool) error {
 	}
 	s.Tools[t.Name] = t
 	return nil
+}
+
+// StageMapper maps a prompt to an execution stage.
+type StageMapper interface {
+	MapStage(ctx context.Context, prompt string) (*AgentStage, error)
 }
 
 // OneBitStageMapper is a stage mapper that uses a one bit predictor and a prompt to do stage mapping.
@@ -79,4 +94,37 @@ func (m *OneBitStageMapper) MapStage(ctx context.Context, prompt string) (*Agent
 	}
 
 	return m.StageTwo, nil
+}
+
+// PromptScorer computes a routing score for a prompt.
+type PromptScorer func(prompt string) float64
+
+// ThresholdStageMapper routes prompts to one of two stages by comparing score to a threshold.
+type ThresholdStageMapper struct {
+	Threshold float64
+	LowStage  *AgentStage
+	HighStage *AgentStage
+	ScoreFn   PromptScorer
+}
+
+// NewThresholdStageMapper creates a stage mapper that routes by score threshold.
+func NewThresholdStageMapper(threshold float64, lowStage, highStage *AgentStage, scoreFn PromptScorer) *ThresholdStageMapper {
+	return &ThresholdStageMapper{
+		Threshold: threshold,
+		LowStage:  lowStage,
+		HighStage: highStage,
+		ScoreFn:   scoreFn,
+	}
+}
+
+// MapStage maps prompt to stage based on score threshold.
+func (m *ThresholdStageMapper) MapStage(_ context.Context, prompt string) (*AgentStage, error) {
+	scoreFn := m.ScoreFn
+	if scoreFn == nil {
+		scoreFn = func(p string) float64 { return float64(len(p)) }
+	}
+	if scoreFn(prompt) >= m.Threshold {
+		return m.HighStage, nil
+	}
+	return m.LowStage, nil
 }

@@ -35,16 +35,12 @@ func (l *AgenticLayer) GetModelProvider(ctx context.Context, backendName string)
 
 // Execute runs a single non-streaming inference call against the named LLM backend.
 // For streaming, use ExecuteStream instead. opts.Stream must be false.
-func (l *AgenticLayer) Execute(ctx context.Context, serverName string, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, error) {
+func (l *AgenticLayer) Execute(ctx context.Context, serverName, stageName string, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, error) {
 	if opts.Stream {
 		return nil, fmt.Errorf("Execute does not support streaming, use ExecuteStream instead")
 	}
 
-	provider, err := l.llmBackendManager.GetModelProvider(ctx, serverName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get provider for server '%s': %w", serverName, err)
-	}
-	response, _, err := provider.Chat(ctx, messages, tools, opts)
+	response, _, err := l.llmBackendManager.ScheduleChat(ctx, serverName, stageName, messages, tools, opts)
 	if err != nil {
 		return nil, fmt.Errorf("inference failed on server '%s': %w", serverName, err)
 	}
@@ -58,16 +54,12 @@ func (l *AgenticLayer) Execute(ctx context.Context, serverName string, messages 
 // is consumed), a channel of stream events, and an error. The caller must consume the channel
 // until closed; the response content, tool_calls, and metrics are populated by the provider's
 // goroutine as the stream completes. opts.Stream must be true.
-func (l *AgenticLayer) ExecuteStream(ctx context.Context, serverName string, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
+func (l *AgenticLayer) ExecuteStream(ctx context.Context, serverName, stageName string, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
 	if !opts.Stream {
 		return nil, nil, fmt.Errorf("ExecuteStream requires opts.Stream to be true")
 	}
 
-	provider, err := l.llmBackendManager.GetModelProvider(ctx, serverName)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get provider for server '%s': %w", serverName, err)
-	}
-	response, ch, err := provider.Chat(ctx, messages, tools, opts)
+	response, ch, err := l.llmBackendManager.ScheduleChat(ctx, serverName, stageName, messages, tools, opts)
 	if err != nil {
 		return nil, nil, fmt.Errorf("inference failed on server '%s': %w", serverName, err)
 	}

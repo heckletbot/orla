@@ -18,6 +18,7 @@ func TestAgent_req(t *testing.T) {
 	require.NotNil(t, r)
 	assert.Equal(t, "test", r.Backend)
 	assert.Equal(t, "hello", r.Prompt)
+	assert.Equal(t, "test", r.Stage)
 	assert.Zero(t, r.MaxTokens)
 
 	a.Stage.SetMaxTokens(100)
@@ -59,4 +60,15 @@ func TestAgent_reqWithMessages_includesResponseFormat(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, r.ResponseFormat)
 	assert.Equal(t, "schema", r.ResponseFormat.Name)
+}
+
+func TestAgent_req_setsStageFromAgentStageName(t *testing.T) {
+	client := NewOrlaClient("http://localhost:8081")
+	backend := &LLMBackend{Name: "b", Endpoint: "http://vllm:8000/v1", Type: "openai", ModelID: "m"}
+	a := NewAgent(client)
+	a.SetStage(NewAgentStage("stage_a", backend))
+
+	r, err := a.req("hello")
+	require.NoError(t, err)
+	assert.Equal(t, "stage_a", r.Stage)
 }

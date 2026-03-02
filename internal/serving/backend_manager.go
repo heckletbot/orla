@@ -8,6 +8,7 @@ import (
 
 	"github.com/dorcha-inc/orla/internal/core"
 	"github.com/dorcha-inc/orla/internal/model"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.uber.org/zap"
 )
 
@@ -20,6 +21,7 @@ type backendEntry struct {
 type LLMBackendManager struct {
 	backends  map[string]*backendEntry
 	providers map[string]model.Provider
+	executors map[string]*backendExecutor
 	mu        sync.RWMutex
 }
 
@@ -28,6 +30,7 @@ func NewLLMBackendManager() *LLMBackendManager {
 	return &LLMBackendManager{
 		backends:  make(map[string]*backendEntry),
 		providers: make(map[string]model.Provider),
+		executors: make(map[string]*backendExecutor),
 	}
 }
 
@@ -36,7 +39,12 @@ func (m *LLMBackendManager) AddLLMBackend(name string, backend *core.LLMBackend,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.backends[name] = &backendEntry{backend: backend, modelID: modelID}
+	// clear cached providers and executors for this backend
 	delete(m.providers, name)
+	if exec, ok := m.executors[name]; ok {
+		exec.close()
+		delete(m.executors, name)
+	}
 }
 
 // GetModelProvider returns a cached provider for an LLM backend, creating it if necessary
@@ -73,6 +81,50 @@ func (m *LLMBackendManager) GetModelProvider(ctx context.Context, backendName st
 		zap.String("model", entry.modelID))
 
 	return provider, nil
+}
+
+func (m *LLMBackendManager) getOrCreateExecutorLocked(backendName string) (*backendExecutor, error) {
+	if _, exists := m.backends[backendName]; !exists {
+		return nil, fmt.Errorf("llm_backend '%s' not found", backendName)
+	}
+	if exec, ok := m.executors[backendName]; ok {
+		return exec, nil
+	}
+	exec := newBackendExecutor(backendName, m)
+	m.executors[backendName] = exec
+	return exec, nil
+}
+
+// ScheduleChat queues a request for execution under the backend's scheduling policy.
+// stageName identifies the stage queue inside the backend. Empty uses "default".
+func (m *LLMBackendManager) ScheduleChat(ctx context.Context, backendName, stageName string, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
+	m.mu.Lock()
+	exec, err := m.getOrCreateExecutorLocked(backendName)
+	m.mu.Unlock()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	req := &scheduledRequest{
+		ctx:        ctx,
+		backend:    backendName,
+		stageName:  stageName,
+		messages:   messages,
+		tools:      tools,
+		opts:       opts,
+		enqueuedAt: time.Now(),
+		resultCh:   make(chan scheduledResult, 1),
+	}
+	if err := exec.enqueue(req); err != nil {
+		return nil, nil, err
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	case result := <-req.resultCh:
+		return result.response, result.streamCh, result.err
+	}
 }
 
 // HealthStatus represents the health status of an LLM backend

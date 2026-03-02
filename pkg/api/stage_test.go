@@ -122,3 +122,38 @@ func TestOneBitStageMapper_MapStage_predictError(t *testing.T) {
 	assert.Nil(t, got)
 	assert.Contains(t, err.Error(), "failed to predict stage")
 }
+
+func TestOneBitStageMapper_ImplementsStageMapper(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		encodeExecuteResponse(w, ExecuteResponse{
+			Success:  true,
+			Response: &InferenceResponse{Content: `{"prediction":true}`},
+		})
+	}))
+	defer server.Close()
+
+	client := NewOrlaClient(server.URL)
+	backend := &LLMBackend{Name: "b", Endpoint: server.URL, Type: "openai", ModelID: "m"}
+	stageOne := NewAgentStage("one", backend)
+	stageTwo := NewAgentStage("two", backend)
+	var mapper StageMapper = NewOneBitStageMapper(client, backend, stageOne, stageTwo)
+
+	got, err := mapper.MapStage(context.Background(), "prompt")
+	require.NoError(t, err)
+	assert.Same(t, stageOne, got)
+}
+
+func TestThresholdStageMapper_RoutesByPromptLengthDefault(t *testing.T) {
+	backend := &LLMBackend{Name: "b", Endpoint: "http://x", Type: "openai", ModelID: "m"}
+	low := NewAgentStage("low", backend)
+	high := NewAgentStage("high", backend)
+
+	mapper := NewThresholdStageMapper(10, low, high, nil)
+	gotShort, err := mapper.MapStage(context.Background(), "short")
+	require.NoError(t, err)
+	assert.Same(t, low, gotShort)
+
+	gotLong, err := mapper.MapStage(context.Background(), "this is definitely long")
+	require.NoError(t, err)
+	assert.Same(t, high, gotLong)
+}

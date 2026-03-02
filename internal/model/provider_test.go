@@ -1,12 +1,23 @@
 package model
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dorcha-inc/orla/internal/config"
+	"github.com/dorcha-inc/orla/internal/core"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type stubProvider struct{}
+
+func (s *stubProvider) Name() string { return "stub" }
+func (s *stubProvider) Chat(_ context.Context, _ []Message, _ []*mcp.Tool, _ InferenceOptions) (*Response, <-chan StreamEvent, error) {
+	return &Response{Content: "ok"}, nil, nil
+}
+func (s *stubProvider) EnsureReady(_ context.Context) error { return nil }
 
 func TestParseModelIdentifier(t *testing.T) {
 	tests := []struct {
@@ -124,4 +135,21 @@ func TestNewProvider(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRegisterProviderFactory(t *testing.T) {
+	RegisterProviderFactory("custom", func(modelName string, backend *core.LLMBackend, cfg *config.OrlaConfig) (Provider, error) {
+		assert.Equal(t, "demo", modelName)
+		assert.NotNil(t, cfg)
+		_ = backend
+		return &stubProvider{}, nil
+	})
+
+	cfg := &config.OrlaConfig{
+		Model:      "custom:demo",
+		LLMBackend: &core.LLMBackend{Type: core.LLMInferenceAPITypeOpenAI, Endpoint: "http://example"},
+	}
+	provider, err := NewProvider(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "stub", provider.Name())
 }

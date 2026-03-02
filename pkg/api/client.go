@@ -95,6 +95,8 @@ func NewStructuredOutputRequest(name string, schema any) *StructuredOutputReques
 // ExecuteRequest represents a request to execute inference on a named backend.
 type ExecuteRequest struct {
 	Backend string `json:"backend"`
+	// Stage is the stage name associated with this request. If unset, server uses default stage queue.
+	Stage string `json:"stage,omitempty"`
 	// Prompt is the prompt to execute.
 	Prompt string `json:"prompt,omitempty"`
 	// Messages are the messages to execute.
@@ -113,6 +115,20 @@ type ExecuteRequest struct {
 	ResponseFormat *StructuredOutputRequest `json:"response_format,omitempty"`
 	// ChatTemplateKwargs are extra kwargs passed to the chat template renderer
 	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
+	// SchedulingPolicy selects server-side queue scheduling policy.
+	SchedulingPolicy string `json:"scheduling_policy,omitempty"`
+	// SchedulingHints are optional policy hints attached to the request.
+	SchedulingHints *SchedulingHints `json:"scheduling_hints,omitempty"`
+}
+
+const (
+	SchedulingPolicyFCFS     = "fcfs"
+	SchedulingPolicyPriority = "priority"
+)
+
+// SchedulingHints are optional server scheduling hints attached to execute requests.
+type SchedulingHints struct {
+	Priority *int `json:"priority,omitempty"`
 }
 
 // ExecuteResponse represents the response from an execute call.
@@ -152,10 +168,14 @@ type InferenceResponse struct {
 
 // InferenceResponseMetrics holds timing and token usage metrics from execution.
 type InferenceResponseMetrics struct {
-	TTFTMs           int64 `json:"ttft_ms,omitempty"`
-	TPOTMs           int64 `json:"tpot_ms,omitempty"`
-	PromptTokens     int   `json:"prompt_tokens,omitempty"`
-	CompletionTokens int   `json:"completion_tokens,omitempty"`
+	TTFTMs              int64 `json:"ttft_ms,omitempty"`
+	TPOTMs              int64 `json:"tpot_ms,omitempty"`
+	PromptTokens        int   `json:"prompt_tokens,omitempty"`
+	CompletionTokens    int   `json:"completion_tokens,omitempty"`
+	QueueWaitMs         int64 `json:"queue_wait_ms,omitempty"`
+	SchedulerDecisionMs int64 `json:"scheduler_decision_ms,omitempty"`
+	DispatchMs          int64 `json:"dispatch_ms,omitempty"`
+	BackendLatencyMs    int64 `json:"backend_latency_ms,omitempty"`
 }
 
 // StreamEvent is a single event from ExecuteStream. Exactly one of Content, Thinking, ToolCall, or Response is set, depending on Type.

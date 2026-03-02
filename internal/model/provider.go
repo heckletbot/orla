@@ -3,10 +3,33 @@ package model
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/dorcha-inc/orla/internal/config"
 	"github.com/dorcha-inc/orla/internal/core"
 )
+
+// ProviderFactory creates a provider for a parsed model name and backend context.
+type ProviderFactory func(modelName string, backend *core.LLMBackend, cfg *config.OrlaConfig) (Provider, error)
+
+var (
+	providerRegistryMu sync.RWMutex
+	providerRegistry   = map[string]ProviderFactory{}
+)
+
+// RegisterProviderFactory registers a provider factory by provider name (e.g. "openai").
+func RegisterProviderFactory(providerName string, factory ProviderFactory) {
+	providerRegistryMu.Lock()
+	defer providerRegistryMu.Unlock()
+	providerRegistry[strings.ToLower(providerName)] = factory
+}
+
+func getProviderFactory(providerName string) (ProviderFactory, bool) {
+	providerRegistryMu.RLock()
+	defer providerRegistryMu.RUnlock()
+	factory, ok := providerRegistry[strings.ToLower(providerName)]
+	return factory, ok
+}
 
 // ParseModelIdentifier parses a model identifier string (e.g., "ollama:llama3")
 // and returns the provider name and model name
@@ -48,16 +71,25 @@ func newProviderForModel(modelID string, backend *core.LLMBackend, cfg *config.O
 		return nil, err
 	}
 
-	supportedProviders := map[core.LLMInferenceAPIType]struct{}{
-		core.LLMInferenceAPITypeOllama: {},
-		core.LLMInferenceAPITypeOpenAI: {},
-		core.LLMInferenceAPITypeSGLang: {},
+	factory, ok := getProviderFactory(providerName)
+	if !ok {
+		supportedProviders := map[string]struct{}{}
+		providerRegistryMu.RLock()
+		for provider := range providerRegistry {
+			supportedProviders[provider] = struct{}{}
+		}
+		providerRegistryMu.RUnlock()
+		return nil, fmt.Errorf("unknown model provider: %s: supported providers are %s", providerName, core.JoinMapKeys(supportedProviders))
 	}
+	return factory(modelName, backend, cfg)
+}
 
-	switch providerName {
-	case string(core.LLMInferenceAPITypeOllama):
+func init() {
+	RegisterProviderFactory(string(core.LLMInferenceAPITypeOllama), func(modelName string, _ *core.LLMBackend, cfg *config.OrlaConfig) (Provider, error) {
 		return NewOllamaProvider(modelName, cfg)
-	case string(core.LLMInferenceAPITypeSGLang):
+	})
+
+	RegisterProviderFactory(string(core.LLMInferenceAPITypeSGLang), func(modelName string, backend *core.LLMBackend, cfg *config.OrlaConfig) (Provider, error) {
 		if backend == nil {
 			cfg.LLMBackend = &core.LLMBackend{Type: core.LLMInferenceAPITypeOllama}
 		} else if backend.Type == "" {
@@ -69,9 +101,9 @@ func newProviderForModel(modelID string, backend *core.LLMBackend, cfg *config.O
 			return nil, fmt.Errorf("for an SGLang backend, the Inference API type must be %s, got %s", core.LLMInferenceAPITypeOllama, backend.Type)
 		}
 		return NewOllamaProvider(modelName, cfg)
-	case string(core.LLMInferenceAPITypeOpenAI):
+	})
+
+	RegisterProviderFactory(string(core.LLMInferenceAPITypeOpenAI), func(modelName string, _ *core.LLMBackend, cfg *config.OrlaConfig) (Provider, error) {
 		return NewOpenAIProvider(modelName, cfg.LLMBackend)
-	default:
-		return nil, fmt.Errorf("unknown model provider: %s: supported providers are %s", providerName, core.JoinMapKeys(supportedProviders))
-	}
+	})
 }
