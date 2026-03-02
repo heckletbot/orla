@@ -9,8 +9,17 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 	"time"
 )
+
+// StepRecorder is the interface for recording per-step metrics during RunAgentLoop.
+// Implemented by RunMetricsRecorder (sequential) and InstanceRecorder (parallel workers).
+type StepRecorder interface {
+	BeginStep(stepIndex int)
+	RecordStepTokens(promptTokens, completionTokens int)
+	EndStep(stepIndex int)
+}
 
 // StepMetrics is the timing and token usage for one ReAct step (one inference + command execution).
 type StepMetrics struct {
@@ -48,8 +57,69 @@ type RunMetrics struct {
 	TotalCompletionTokens int               `json:"total_completion_tokens"`
 }
 
+// InstanceRecorder records metrics for a single instance. Use in parallel workers; when done, call
+// EndInstance() and add the returned InstanceMetrics to RunMetricsRecorder via AddInstance.
+type InstanceRecorder struct {
+	inst     InstanceMetrics
+	stepStart time.Time
+}
+
+// BeginInstance starts timing this instance. Call once before RunAgentLoop.
+func (r *InstanceRecorder) BeginInstance(instanceID, mappedStage string) {
+	r.inst = InstanceMetrics{
+		InstanceID:  instanceID,
+		MappedStage: mappedStage,
+		StartTime:   time.Now().UnixMilli(),
+		Steps:       nil,
+	}
+}
+
+// BeginStep implements StepRecorder.
+func (r *InstanceRecorder) BeginStep(stepIndex int) {
+	r.stepStart = time.Now()
+	r.inst.Steps = append(r.inst.Steps, StepMetrics{
+		StepIndex: stepIndex,
+		StartTime: r.stepStart.UnixMilli(),
+	})
+}
+
+// RecordStepTokens implements StepRecorder.
+func (r *InstanceRecorder) RecordStepTokens(promptTokens, completionTokens int) {
+	if len(r.inst.Steps) == 0 {
+		return
+	}
+	last := &r.inst.Steps[len(r.inst.Steps)-1]
+	last.PromptTokens = promptTokens
+	last.CompletionTokens = completionTokens
+}
+
+// EndStep implements StepRecorder.
+func (r *InstanceRecorder) EndStep(stepIndex int) {
+	if len(r.inst.Steps) == 0 {
+		return
+	}
+	now := time.Now()
+	last := &r.inst.Steps[len(r.inst.Steps)-1]
+	last.EndTime = now.UnixMilli()
+	last.DurationMs = last.EndTime - last.StartTime
+}
+
+// EndInstance finalizes and returns the instance metrics. Call after RunAgentLoop.
+func (r *InstanceRecorder) EndInstance() InstanceMetrics {
+	now := time.Now()
+	r.inst.EndTime = now.UnixMilli()
+	r.inst.DurationMs = r.inst.EndTime - r.inst.StartTime
+	r.inst.StepsCount = len(r.inst.Steps)
+	for _, s := range r.inst.Steps {
+		r.inst.TotalPromptTokens += s.PromptTokens
+		r.inst.TotalCompletionTokens += s.CompletionTokens
+	}
+	return r.inst
+}
+
 // RunMetricsRecorder records timings for a run. Call BeginRun once, then for each instance
 // BeginInstance/EndInstance, and for each step BeginStep/EndStep. Call EndRun and Write at the end.
+// For parallel runs, use InstanceRecorder per worker and AddInstance to merge (thread-safe).
 type RunMetricsRecorder struct {
 	ExperimentName string
 	startTime      time.Time
@@ -57,6 +127,7 @@ type RunMetricsRecorder struct {
 	instances      []InstanceMetrics
 	current        *InstanceMetrics
 	stepStart      time.Time
+	mu             sync.Mutex
 }
 
 // NewRunMetricsRecorder returns a new recorder. Name is used in the output (e.g. "baseline", "two_stage_mapping").
@@ -73,6 +144,22 @@ func (r *RunMetricsRecorder) BeginRun() {
 func (r *RunMetricsRecorder) EndRun() {
 	r.endTime = time.Now()
 	log.Printf("[metrics] run: duration=%dms", r.endTime.Sub(r.startTime).Milliseconds())
+}
+
+// AddInstance appends instance metrics from a parallel worker. Thread-safe.
+func (r *RunMetricsRecorder) AddInstance(inst InstanceMetrics) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if inst.MappedStage != "" {
+		log.Printf("[metrics] instance %s: stage=%s, duration=%dms, steps=%d, prompt_tokens=%d, completion_tokens=%d",
+			inst.InstanceID, inst.MappedStage, inst.DurationMs, inst.StepsCount,
+			inst.TotalPromptTokens, inst.TotalCompletionTokens)
+	} else {
+		log.Printf("[metrics] instance %s: duration=%dms, steps=%d, prompt_tokens=%d, completion_tokens=%d",
+			inst.InstanceID, inst.DurationMs, inst.StepsCount,
+			inst.TotalPromptTokens, inst.TotalCompletionTokens)
+	}
+	r.instances = append(r.instances, inst)
 }
 
 // BeginInstance starts timing an instance. Call after PrepareWorkdir for that instance.

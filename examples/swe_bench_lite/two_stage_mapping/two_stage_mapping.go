@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 
 	orla "github.com/dorcha-inc/orla/pkg/api"
 
@@ -32,10 +33,19 @@ Choose false (heavy) when the fix likely needs: multiple files, unclear root cau
 Apply the criteria above; choose the option that best matches the task. Output prediction: `
 )
 
-// Run loads the dataset, registers light and heavy backends, and for each instance:
-// 1) runs the router (light model) to get Light or Heavy,
-// 2) runs the ReAct agent loop on the chosen stage (light or heavy model),
-// 3) appends the prediction to shared.OutputPath.
+// We run one job at a time per backend (light and heavy). The concurrency win is that
+// light and heavy backends are used at the same time, not that we parallelize within one backend.
+
+type stageJob struct {
+	inst       shared.SWEBenchLiteInstance
+	absWorkdir string
+	stageName  string
+}
+
+// Run loads the dataset, registers light and heavy backends, then:
+// 1) Routes all instances (light model) and assigns each to light or heavy.
+// 2) Runs light-routed instances in parallel on the light backend and heavy-routed on the heavy backend concurrently.
+// 3) Appends predictions to shared.OutputPath (order may differ from dataset).
 func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 	client := orla.NewOrlaClient(shared.OrlaURL)
 	if err := client.Health(ctx); err != nil {
@@ -70,11 +80,11 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 	lightStage.SetChatTemplateKwargs(shared.NoThinking)
 	heavyStage.SetChatTemplateKwargs(shared.NoThinking)
 
-	var currentWorkdir string
-
-	// Router runs on the light model (one forward per instance); ReAct loop uses light or heavy per instance.
 	mapper := orla.NewOneBitStageMapper(client, lightBackend, lightStage, heavyStage)
-	agent := orla.NewAgent(client)
+	agentLight := orla.NewAgent(client)
+	agentLight.SetStage(lightStage)
+	agentHeavy := orla.NewAgent(client)
+	agentHeavy.SetStage(heavyStage)
 
 	outFile, err := os.OpenFile(shared.OutputPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -82,6 +92,7 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 	}
 	defer shared.LogDeferredError(outFile.Close)
 	enc := shared.NewPredictionEncoder(outFile)
+	var encMu sync.Mutex
 	metrics := shared.NewRunMetricsRecorder("two_stage_mapping")
 	metrics.BeginRun()
 	defer func() {
@@ -91,54 +102,86 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset) error {
 		}
 	}()
 
+	// Phase 1: route all instances and prepare workdirs
+	var lightJobs, heavyJobs []stageJob
 	for i, inst := range dataset.Instances {
 		if i >= shared.MaxIterations {
 			break
 		}
-
 		absWorkdir, err := shared.PrepareWorkdir(ctx, inst)
 		if err != nil {
-			return fmt.Errorf("prepare workdir: %w", err)
+			return fmt.Errorf("prepare workdir %s: %w", inst.InstanceID, err)
 		}
-		currentWorkdir = absWorkdir
-		log.Printf("running instance %d/%d: %s", i+1, len(dataset.Instances), inst.InstanceID)
-		metrics.BeginInstance(inst.InstanceID)
-
 		routerPrompt := routerPromptPrefix + shared.FormatProblemMessage(inst)
 		stage, err := mapper.MapStage(ctx, routerPrompt)
 		if err != nil {
 			return fmt.Errorf("instance %s map stage: %w", inst.InstanceID, err)
 		}
-
 		log.Printf("instance %s: router => %s (prompt_len=%d)", inst.InstanceID, stage.Name, len(routerPrompt))
-		metrics.SetMappedStage(stage.Name)
-		agent.SetStage(stage)
-
-		messages := shared.PrepareInitialMessages(inst)
-		if err := shared.RunAgentLoop(ctx, agent, messages, metrics, func() string { return currentWorkdir }); err != nil {
-			return fmt.Errorf("instance %s: %w", inst.InstanceID, err)
+		job := stageJob{inst: inst, absWorkdir: absWorkdir, stageName: stage.Name}
+		if stage.Name == "light" {
+			lightJobs = append(lightJobs, job)
+		} else {
+			heavyJobs = append(heavyJobs, job)
 		}
+	}
 
-		metrics.EndInstance()
+	// Phase 2: one worker per backend; light and heavy run concurrently
+	runJob := func(job stageJob, agent *orla.Agent) {
+		inst := job.inst
+		rec := &shared.InstanceRecorder{}
+		rec.BeginInstance(inst.InstanceID, job.stageName)
+		messages := shared.PrepareInitialMessages(inst)
+		workdir := job.absWorkdir
+		if err := shared.RunAgentLoop(ctx, agent, messages, rec, func() string { return workdir }); err != nil {
+			log.Printf("instance %s: %v", inst.InstanceID, err)
+		}
+		metrics.AddInstance(rec.EndInstance())
 
 		patch := ""
-		if p, ok := shared.PatchFromWorkdir(absWorkdir); ok && strings.TrimSpace(p) != "" {
+		if p, ok := shared.PatchFromWorkdir(workdir); ok && strings.TrimSpace(p) != "" {
 			patch = p
 		}
-		patchPreview := patch
-		if len(patchPreview) > shared.MaxToolOutputBytes {
-			patchPreview = patch[:shared.MaxToolOutputBytes] + "..."
+		if len(patch) > shared.MaxToolOutputBytes {
+			log.Printf("patch: %s...", patch[:shared.MaxToolOutputBytes])
+		} else {
+			log.Printf("patch: %s", patch)
 		}
-		log.Printf("patch: %s", patchPreview)
-
-		if err := enc.Encode(shared.Prediction{
+		encMu.Lock()
+		_ = enc.Encode(shared.Prediction{
 			InstanceID:      inst.InstanceID,
 			ModelNameOrPath: "orla-two-stage",
 			ModelPatch:      patch,
-		}); err != nil {
-			return fmt.Errorf("failed to encode prediction %s: %w", inst.InstanceID, err)
-		}
+		})
+		encMu.Unlock()
 	}
+
+	lightChan := make(chan stageJob, len(lightJobs))
+	heavyChan := make(chan stageJob, len(heavyJobs))
+	for _, j := range lightJobs {
+		lightChan <- j
+	}
+	close(lightChan)
+	for _, j := range heavyJobs {
+		heavyChan <- j
+	}
+	close(heavyChan)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for j := range lightChan {
+			runJob(j, agentLight)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for j := range heavyChan {
+			runJob(j, agentHeavy)
+		}
+	}()
+	wg.Wait()
 
 	log.Printf("Done. Predictions written to %s, metrics to %s", shared.OutputPath, shared.MetricsPath)
 	return nil

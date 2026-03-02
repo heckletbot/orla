@@ -389,18 +389,18 @@ func isContextOverflow(err error) bool {
 // RunAgentLoop runs the text-based ReAct loop (no tool calling).
 // The model outputs THOUGHT + ` + "```" + `orla_bash ... ` + "```" + `, we parse and execute the command,
 // then feed the output back as a user message.
-func RunAgentLoop(ctx context.Context, agent *orla.Agent, messages []orla.Message, metrics *RunMetricsRecorder, getWorkdir func() string) error {
+func RunAgentLoop(ctx context.Context, agent *orla.Agent, messages []orla.Message, recorder StepRecorder, getWorkdir func() string) error {
 	formatRetries := 0
 	var lastCmd string
 	repeatCount := 0
 	nudged := false
 	for step := range MaxSteps {
 		log.Printf("step %d: executing", step+1)
-		metrics.BeginStep(step + 1)
+		recorder.BeginStep(step + 1)
 		resp, err := agent.ExecuteWithMessages(ctx, messages)
 		if err != nil {
 			if isContextOverflow(err) {
-				metrics.EndStep(step + 1)
+				recorder.EndStep(step + 1)
 				log.Printf("step %d: context window exceeded, stopping gracefully", step+1)
 				return nil
 			}
@@ -408,7 +408,7 @@ func RunAgentLoop(ctx context.Context, agent *orla.Agent, messages []orla.Messag
 		}
 		content := resp.Content
 		if resp.Metrics != nil {
-			metrics.RecordStepTokens(resp.Metrics.PromptTokens, resp.Metrics.CompletionTokens)
+			recorder.RecordStepTokens(resp.Metrics.PromptTokens, resp.Metrics.CompletionTokens)
 		}
 		log.Printf("step %d: response: %s", step+1, truncateForLog(content, 500))
 
@@ -416,14 +416,14 @@ func RunAgentLoop(ctx context.Context, agent *orla.Agent, messages []orla.Messag
 		if cmdStr == "" {
 			formatRetries++
 			if formatRetries >= maxFormatRetries {
-				metrics.EndStep(step + 1)
+				recorder.EndStep(step + 1)
 				log.Printf("step %d: %d consecutive format errors, stopping", step+1, formatRetries)
 				return nil
 			}
 			log.Printf("step %d: no bash block found, sending format error (%d/%d)", step+1, formatRetries, maxFormatRetries)
 			messages = append(messages, orla.Message{Role: "assistant", Content: content})
 			messages = append(messages, orla.Message{Role: "user", Content: formatErrorMsg})
-			metrics.EndStep(step + 1)
+			recorder.EndStep(step + 1)
 			continue
 		}
 		formatRetries = 0
@@ -438,7 +438,7 @@ func RunAgentLoop(ctx context.Context, agent *orla.Agent, messages []orla.Messag
 
 		if repeatCount > maxRepeatCommands {
 			if nudged {
-				metrics.EndStep(step + 1)
+				recorder.EndStep(step + 1)
 				log.Printf("step %d: command still repeated after nudge, model is stuck — stopping instance", step+1)
 				return nil
 			}
@@ -446,7 +446,7 @@ func RunAgentLoop(ctx context.Context, agent *orla.Agent, messages []orla.Messag
 			messages = append(messages, orla.Message{Role: "assistant", Content: content})
 			messages = append(messages, orla.Message{Role: "user", Content: repeatNudgeMsg})
 			nudged = true
-			metrics.EndStep(step + 1)
+			recorder.EndStep(step + 1)
 			continue
 		}
 
@@ -456,7 +456,7 @@ func RunAgentLoop(ctx context.Context, agent *orla.Agent, messages []orla.Messag
 		observation := RunBash(ctx, getWorkdir(), cmdStr)
 		log.Printf("step %d: observation: %s", step+1, truncateForLog(observation, 300))
 		messages = append(messages, orla.Message{Role: "user", Content: observation})
-		metrics.EndStep(step + 1)
+		recorder.EndStep(step + 1)
 	}
 	return nil
 }
