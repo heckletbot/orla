@@ -27,6 +27,9 @@ services:
       - "0.0.0.0"
       - "--port"
       - "8000"
+      # Share GPU with vllm-light on single-GPU (e.g. 96GB): use ~60% so both fit
+      - "--gpu-memory-utilization"
+      - "${VLLM_HEAVY_GPU_UTIL:-0.60}"
     ipc: host
     restart: unless-stopped
     healthcheck:
@@ -62,6 +65,9 @@ services:
       - "0.0.0.0"
       - "--port"
       - "8000"
+      # Share GPU with vllm-heavy: use ~35% so both fit on e.g. 96GB
+      - "--gpu-memory-utilization"
+      - "${VLLM_LIGHT_GPU_UTIL:-0.35}"
     ipc: host
     restart: unless-stopped
     healthcheck:
