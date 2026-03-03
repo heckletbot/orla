@@ -1,12 +1,10 @@
 // Package shared provides common types and helpers for SWE-bench Lite experiments.
-// Use LoadDataset, EnsureRepo, RunAgentLoop (with a *Stage), and PatchFromWorkdir from baseline and other experiments.
 package shared
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -17,106 +15,49 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
-
-	orla "github.com/dorcha-inc/orla/pkg/api"
 )
 
 const (
-	// DefaultSystemPrompt follows the mini-swe-agent pattern: text-based actions with THOUGHT + code block.
-	// Uses a unique code fence tag (orla_bash) to avoid collisions with code in model reasoning.
-	DefaultSystemPrompt = `You are a helpful assistant that can interact multiple times with a computer shell to solve programming tasks.
-Your response must contain exactly ONE bash code block with ONE command (or commands connected with && or ||).
-Include a THOUGHT section before your command where you explain your reasoning process.
-Format your response as shown in <format>.
-
-<format>
-THOUGHT: Your reasoning and analysis here. Explain why you want to perform the action.
-
-` + "```" + `orla_bash
-your_command_here
-` + "```" + `
-</format>
-
-Failure to follow these rules will cause your response to be rejected.
-
-## Recommended Workflow
-
-1. Analyze the codebase by finding and reading relevant files
-2. Create a script to reproduce the issue
-3. Edit the source code to resolve the issue
-4. Verify your fix works by running your script again
-5. Test edge cases to ensure your fix is robust
-
-## Important Rules
-
-- Every response must contain exactly one bash code block
-- Directory or environment variable changes are not persistent. Every action is executed in a new subshell. However, you can prefix any action with ` + "`" + `cd /path/to/dir && ...` + "`" + ` or write/load environment variables from files
-- Do not run git clone or git checkout
-- Keep edits minimal and targeted — modify only source files, not tests or config
-
-## Useful command examples
-
-### View file content with line numbers:
-` + "```" + `orla_bash
-nl -ba filename.py | sed -n '10,20p'
-` + "```" + `
-
-### Edit files with sed:
-` + "```" + `orla_bash
-sed -i 's/old_string/new_string/g' filename.py
-` + "```" + `
-
-### Edit with python3 (for complex changes):
-` + "```" + `orla_bash
-python3 -c "
-import pathlib; p = pathlib.Path('file.py'); t = p.read_text()
-t = t.replace('old_code', 'new_code'); p.write_text(t)"
-` + "```" + `
-
-### Create a new file:
-` + "```" + `orla_bash
-cat <<'EOF' > newfile.py
-import numpy as np
-print("hello")
-EOF
-` + "```" + ``
-
-	// MaxSteps caps ReAct steps per instance. mini-swe-agent uses 250; we use 100 as a practical limit for local models.
-	MaxSteps        = 100
 	MaxOutputTokens = 4096
 
 	MaxIterations = 10
 
-	// Fixed paths/URLs for the Docker compose setup.
 	OrlaURL     = "http://orla:8081"
 	SGLangURL   = "http://sglang:30000/v1"
 	DatasetRoot = "/dataset/test"
 	WorkdirRoot = "/workdir"
 	OutputPath  = "/output/predictions.jsonl"
-	// MetricsPath is the default path for run metrics (end-to-end, per-instance, per-step). Override with METRICS_PATH.
 	MetricsPath = "/output/metrics.json"
 
-	// MaxToolOutputBytes caps command output sent to the model. Outputs longer than this
-	// are shown as first-half + last-half with an elision message in between.
 	MaxToolOutputBytes = 10000
-
-	// CommandTimeout is the per-command timeout (matches mini-swe-agent's 60s).
-	CommandTimeout = 60
 )
 
-// NoThinking is a map of extra kwargs for the chat template renderer to disable thinking.
-var NoThinking = map[string]any{"enable_thinking": false}
+var (
+	VLLMHeavyURL          = os.Getenv("VLLM_HEAVY_URL")
+	VLLMLightURL          = os.Getenv("VLLM_LIGHT_URL")
+	BackendProviderIsVLLM = os.Getenv("BACKEND_PROVIDER") == "vllm"
+)
 
-// SWEBenchLiteInstance is one instance from the dataset (instance_id, repo, base_commit, problem_statement).
+// SingleShotSystemPrompt instructs the model to produce a unified diff patch from the
+// problem statement and oracle-provided source files.
+const SingleShotSystemPrompt = `You are an expert software engineer. You are given a bug report and the relevant source files from the repository. Your task is to produce a minimal unified diff patch that fixes the described issue.
+
+Rules:
+- Output ONLY a unified diff (the format produced by "git diff").
+- Do not include any explanation, commentary, or markdown fences — just the raw diff.
+- Only modify the minimum lines necessary to fix the issue.
+- Do not modify tests or configuration files.`
+
+// SWEBenchLiteInstance is one instance from the dataset.
 type SWEBenchLiteInstance struct {
 	InstanceID       string `json:"instance_id"`
 	Repo             string `json:"repo"`
 	BaseCommit       string `json:"base_commit"`
 	ProblemStatement string `json:"problem_statement"`
+	Patch            string `json:"patch,omitempty"`
 }
 
-// SWEBenchLiteDataset is the loaded set of instances (e.g. from LoadDataset).
+// SWEBenchLiteDataset is the loaded set of instances.
 type SWEBenchLiteDataset struct {
 	Instances []SWEBenchLiteInstance
 }
@@ -127,7 +68,7 @@ func LogDeferredError(fn func() error) {
 	}
 }
 
-// LoadDataset opens the dataset root (fixed path for Docker) with os.OpenRoot and loads all .json instance files.
+// LoadDataset opens the dataset root and loads all .json instance files.
 func LoadDataset() (*SWEBenchLiteDataset, error) {
 	root, err := os.OpenRoot(DatasetRoot)
 	if err != nil {
@@ -172,7 +113,7 @@ func LoadDataset() (*SWEBenchLiteDataset, error) {
 	return dataset, nil
 }
 
-// PrepareWorkdir computes the workdir path for the instance, ensures the repo is cloned and at baseCommit, and returns the absolute workdir path.
+// PrepareWorkdir ensures the repo is cloned and at the base commit, returns the absolute workdir path.
 func PrepareWorkdir(ctx context.Context, inst SWEBenchLiteInstance) (absWorkdir string, err error) {
 	workdir := filepath.Join(WorkdirRoot, inst.InstanceID)
 	absWorkdir, err = filepath.Abs(workdir)
@@ -185,22 +126,9 @@ func PrepareWorkdir(ctx context.Context, inst SWEBenchLiteInstance) (absWorkdir 
 	return absWorkdir, nil
 }
 
-// FormatProblemMessage returns the user message content for the standard SWE-bench task (problem statement + repo info).
-func FormatProblemMessage(inst SWEBenchLiteInstance) string {
-	return fmt.Sprintf("Please solve this issue:\n\n%s\n\nRepository: %s (base commit: %s)\n\nYou can execute bash commands to explore, edit files, and verify your fix. The submitted patch is the git diff after your edits.",
-		inst.ProblemStatement, inst.Repo, inst.BaseCommit)
-}
-
-func PrepareInitialMessages(inst SWEBenchLiteInstance) []orla.Message {
-	return []orla.Message{
-		{Role: "system", Content: DefaultSystemPrompt},
-		{Role: "user", Content: FormatProblemMessage(inst)},
-	}
-}
-
 // EnsureRepo clones repo into workdir if needed, then fetches and checks out baseCommit.
 func EnsureRepo(ctx context.Context, workdir, repo, baseCommit string) error {
-	// #nosec G301 -- workdir is under WorkdirRoot, which is under /workdir in Docker
+	// #nosec G301 -- workdir is under WorkdirRoot
 	if err := os.MkdirAll(filepath.Dir(workdir), 0o755); err != nil {
 		return fmt.Errorf("mkdir all: %w", err)
 	}
@@ -209,7 +137,6 @@ func EnsureRepo(ctx context.Context, workdir, repo, baseCommit string) error {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("stat: %w", err)
 		}
-
 		log.Printf("  Cloning https://github.com/%s.git into %s", repo, workdir)
 		clone := exec.CommandContext(ctx, "git", "clone", "https://github.com/"+repo+".git", workdir)
 		clone.Stdout = os.Stdout
@@ -223,7 +150,6 @@ func EnsureRepo(ctx context.Context, workdir, repo, baseCommit string) error {
 	fetch.Dir = workdir
 	fetch.Stdout = os.Stdout
 	fetch.Stderr = os.Stderr
-
 	if err := fetch.Run(); err != nil {
 		return fmt.Errorf("git fetch %s: %w", baseCommit, err)
 	}
@@ -236,7 +162,6 @@ func EnsureRepo(ctx context.Context, workdir, repo, baseCommit string) error {
 		return fmt.Errorf("git checkout %s: %w", baseCommit, err)
 	}
 
-	// Force clean working tree (avoids submitting leftover changes from a previous run).
 	reset := exec.CommandContext(ctx, "git", "reset", "--hard", "-q", baseCommit)
 	reset.Dir = workdir
 	reset.Stdout = os.Stdout
@@ -247,7 +172,7 @@ func EnsureRepo(ctx context.Context, workdir, repo, baseCommit string) error {
 	return nil
 }
 
-// PatchFromWorkdir runs "git diff" in workdir and returns the unified diff if there are changes.
+// PatchFromWorkdir runs "git diff" in workdir and returns the unified diff.
 func PatchFromWorkdir(workdir string) (string, bool) {
 	cmd := exec.CommandContext(context.Background(), "git", "diff")
 	cmd.Dir = workdir
@@ -258,7 +183,53 @@ func PatchFromWorkdir(workdir string) (string, bool) {
 	return string(out), len(bytes.TrimSpace(out)) > 0
 }
 
-// Prediction is one line of predictions.jsonl (instance_id, model_name_or_path, model_patch).
+// diffFileRe matches file paths in unified diff headers: "--- a/path" or "+++ b/path".
+var diffFileRe = regexp.MustCompile(`(?m)^(?:---|\+\+\+) [ab]/(.+)$`)
+
+// OracleFilePaths parses a unified diff and returns the deduplicated list of modified file paths.
+func OracleFilePaths(patch string) []string {
+	matches := diffFileRe.FindAllStringSubmatch(patch, -1)
+	seen := map[string]bool{}
+	var paths []string
+	for _, m := range matches {
+		p := m[1]
+		if p == "/dev/null" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+// GatherOracleContext reads the specified files from workdir and concatenates them
+// with file-path headers. Files that cannot be read are skipped with a note.
+func GatherOracleContext(workdir string, filePaths []string) string {
+	var b strings.Builder
+	for _, fp := range filePaths {
+		abs := filepath.Join(workdir, fp)
+		data, err := os.ReadFile(abs) // #nosec G304 -- paths from gold patch, workdir is controlled
+		if err != nil {
+			fmt.Fprintf(&b, "### %s\n[file not found at base commit]\n\n", fp)
+			continue
+		}
+		content := string(data)
+		if len(content) > MaxToolOutputBytes {
+			content = content[:MaxToolOutputBytes] + "\n[truncated]\n"
+		}
+		fmt.Fprintf(&b, "### %s\n```\n%s\n```\n\n", fp, content)
+	}
+	return b.String()
+}
+
+// BuildSingleShotPrompt constructs the user message for a single-shot patch generation request.
+func BuildSingleShotPrompt(inst SWEBenchLiteInstance, oracleContext string) string {
+	return fmt.Sprintf("## Bug Report\n\n%s\n\n## Repository\n\n%s (commit %s)\n\n## Relevant Source Files\n\n%s",
+		inst.ProblemStatement, inst.Repo, inst.BaseCommit, oracleContext)
+}
+
+// Prediction is one line of predictions.jsonl.
 type Prediction struct {
 	InstanceID      string `json:"instance_id"`
 	ModelNameOrPath string `json:"model_name_or_path"`
@@ -282,187 +253,11 @@ func (e *PredictionEncoder) Encode(p Prediction) error {
 	return e.enc.Encode(p)
 }
 
-// truncateForLog truncates s to at most maxLen for log messages.
-func truncateForLog(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
+// ModelName returns the model_name_or_path string for predictions based on mode and backend.
+func ModelName(mode string) string {
+	suffix := ""
+	if BackendProviderIsVLLM {
+		suffix = "-vllm"
 	}
-	return s[:maxLen] + "..."
-}
-
-// truncateForContext caps command output for the model. For outputs longer than MaxToolOutputBytes,
-// shows the first and last portions with an explicit message asking the model to be more selective.
-func truncateForContext(s string) string {
-	if len(s) <= MaxToolOutputBytes {
-		return s
-	}
-	half := MaxToolOutputBytes / 2
-	elided := len(s) - MaxToolOutputBytes
-	return s[:half] +
-		fmt.Sprintf("\n\n[%d characters elided — output too long. Use more selective commands (head, tail, sed -n, grep) to view smaller sections.]\n\n", elided) +
-		s[len(s)-half:]
-}
-
-// bashBlockRe matches ```orla_bash ... ``` code blocks in model output.
-// Falls back to ```bash or plain ``` blocks if the model doesn't use the custom tag.
-var bashBlockRe = regexp.MustCompile("(?s)```(?:orla_bash|bash)?\\s*\\n(.+?)\\n```")
-
-// ExtractBashCommand parses the first ```bash ... ``` block from the model's text response.
-func ExtractBashCommand(content string) string {
-	m := bashBlockRe.FindStringSubmatch(content)
-	if len(m) < 2 {
-		return ""
-	}
-	return strings.TrimSpace(m[1])
-}
-
-// bashEnv contains environment variable overrides to prevent pagers from hanging and progress bars from flooding context.
-var bashEnv = []string{
-	"PAGER=cat",
-	"MANPAGER=cat",
-	"LESS=-R",
-	"PIP_PROGRESS_BAR=off",
-	"TQDM_DISABLE=1",
-}
-
-// RunBash executes a bash command in workdir with a timeout and returns a formatted observation string.
-func RunBash(ctx context.Context, workdir, cmdStr string) string {
-	cmdCtx, cancel := context.WithTimeout(ctx, CommandTimeout*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(cmdCtx, "bash", "-c", cmdStr)
-	cmd.Dir = workdir
-	cmd.Env = append(os.Environ(), bashEnv...)
-	var outBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &outBuf
-	err := cmd.Run()
-	output := truncateForContext(outBuf.String())
-	exitCode := 0
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			exitCode = exitErr.ExitCode()
-		} else {
-			if cmdCtx.Err() == context.DeadlineExceeded {
-				output += fmt.Sprintf("\n[command timed out after %ds]", CommandTimeout)
-			}
-			exitCode = 1
-		}
-	}
-	return fmt.Sprintf("<returncode>%d</returncode>\n<output>\n%s\n</output>", exitCode, strings.TrimRight(output, "\n"))
-}
-
-const (
-	// maxFormatRetries is how many consecutive format errors we tolerate before stopping.
-	maxFormatRetries = 3
-	// maxRepeatCommands is how many times the model can issue the same command before we nudge it.
-	// After the nudge, if it repeats once more, the instance is stopped.
-	maxRepeatCommands = 3
-
-	formatErrorMsg = `Format error: no bash code block found in your response.
-
-Every response MUST include exactly ONE bash code block:
-
-<format>
-THOUGHT: Your reasoning here.
-
-` + "```" + `orla_bash
-your_command_here
-` + "```" + `
-</format>
-
-Please try again with the correct format.`
-
-	repeatNudgeMsg = `You have issued the same command multiple times in a row and are not making progress.
-
-Stop repeating yourself. Take a different approach:
-- If you were reading code, try making an edit now
-- If your edit didn't work, try a different edit strategy (e.g. python3 -c instead of sed)
-- If you're stuck, re-read the error message or problem statement for clues you missed`
-)
-
-// isContextOverflow checks whether an error from the LLM backend is a context-length exceeded error.
-func isContextOverflow(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "exceeds the model's maximum context length")
-}
-
-// RunAgentLoop runs the text-based ReAct loop (no tool calling).
-// The model outputs THOUGHT + ` + "```" + `orla_bash ... ` + "```" + `, we parse and execute the command,
-// then feed the output back as a user message.
-func RunAgentLoop(ctx context.Context, stage *orla.Stage, messages []orla.Message, recorder StepRecorder, getWorkdir func() string) error {
-	formatRetries := 0
-	var lastCmd string
-	repeatCount := 0
-	nudged := false
-	for step := range MaxSteps {
-		log.Printf("step %d: executing", step+1)
-		recorder.BeginStep(step + 1)
-		resp, err := stage.ExecuteWithMessages(ctx, messages)
-		if err != nil {
-			if isContextOverflow(err) {
-				recorder.EndStep(step + 1)
-				log.Printf("step %d: context window exceeded, stopping gracefully", step+1)
-				return nil
-			}
-			return fmt.Errorf("step %d execute: %w", step+1, err)
-		}
-		content := resp.Content
-		if resp.Metrics != nil {
-			recorder.RecordStepTokens(resp.Metrics.PromptTokens, resp.Metrics.CompletionTokens)
-			recorder.RecordStepOrlaOverhead(
-				resp.Metrics.QueueWaitMs,
-				resp.Metrics.SchedulerDecisionMs,
-				resp.Metrics.DispatchMs,
-				resp.Metrics.BackendLatencyMs,
-			)
-		}
-		log.Printf("step %d: response: %s", step+1, truncateForLog(content, 500))
-
-		cmdStr := ExtractBashCommand(content)
-		if cmdStr == "" {
-			formatRetries++
-			if formatRetries >= maxFormatRetries {
-				recorder.EndStep(step + 1)
-				log.Printf("step %d: %d consecutive format errors, stopping", step+1, formatRetries)
-				return nil
-			}
-			log.Printf("step %d: no bash block found, sending format error (%d/%d)", step+1, formatRetries, maxFormatRetries)
-			messages = append(messages, orla.Message{Role: "assistant", Content: content})
-			messages = append(messages, orla.Message{Role: "user", Content: formatErrorMsg})
-			recorder.EndStep(step + 1)
-			continue
-		}
-		formatRetries = 0
-
-		if cmdStr == lastCmd {
-			repeatCount++
-		} else {
-			lastCmd = cmdStr
-			repeatCount = 1
-			nudged = false
-		}
-
-		if repeatCount > maxRepeatCommands {
-			if nudged {
-				recorder.EndStep(step + 1)
-				log.Printf("step %d: command still repeated after nudge, model is stuck — stopping instance", step+1)
-				return nil
-			}
-			log.Printf("step %d: command repeated %d times, injecting nudge", step+1, repeatCount)
-			messages = append(messages, orla.Message{Role: "assistant", Content: content})
-			messages = append(messages, orla.Message{Role: "user", Content: repeatNudgeMsg})
-			nudged = true
-			recorder.EndStep(step + 1)
-			continue
-		}
-
-		log.Printf("step %d: [bash] %s", step+1, cmdStr)
-		messages = append(messages, orla.Message{Role: "assistant", Content: content})
-
-		observation := RunBash(ctx, getWorkdir(), cmdStr)
-		log.Printf("step %d: observation: %s", step+1, truncateForLog(observation, 300))
-		messages = append(messages, orla.Message{Role: "user", Content: observation})
-		recorder.EndStep(step + 1)
-	}
-	return nil
+	return "orla-" + mode + suffix
 }

@@ -1,42 +1,36 @@
-# SWE-bench Lite single-shot experiments: SGLang + Orla + experiment runner.
+# SWE-bench Lite single-shot experiments with vLLM (heavy + light models, Orla, experiment runner).
 # Run from repo root:
-#   docker compose -f deploy/docker-compose.swebench-lite.yaml up -d
+#   docker compose -f deploy/docker-compose.swebench-lite.vllm.yaml build
 #   mkdir -p deploy/output
-#   RUN_TARGET=single_shot_baseline docker compose -f deploy/docker-compose.swebench-lite.yaml up run
+#   RUN_TARGET=single_shot_baseline docker compose -f deploy/docker-compose.swebench-lite.vllm.yaml up run
 # Stage mapping: RUN_TARGET=single_shot_stage_mapping docker compose ...
 # SJF:           RUN_TARGET=single_shot_sjf docker compose ...
-# Predictions: deploy/output/predictions.jsonl. Requires GPU for SGLang.
+# Predictions: deploy/output/predictions.jsonl. Requires GPU.
 
 services:
-  sglang:
-    image: lmsysorg/sglang:latest
-    container_name: swebench-lite-sglang
+  vllm-heavy:
+    image: vllm/vllm-openai:latest
+    container_name: swebench-lite-vllm-heavy
     ports:
-      - "30000:30000"
+      - "8000:8000"
+    volumes:
+      - swebench_vllm_cache:/root/.cache/huggingface
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
-    volumes:
-      - sglang_cache:/root/.cache/huggingface
-    entrypoint: ["python3", "-m", "sglang.launch_server"]
     command:
-      - "--model-path"
-      - "${SGLANG_MODEL:-Qwen/Qwen3-8B}"
+      - "--model"
+      - "${VLLM_HEAVY_MODEL:-Qwen/Qwen3-8B}"
+      - "--enable-auto-tool-choice"
       - "--tool-call-parser"
-      - "qwen"
+      - "hermes"
       - "--host"
       - "0.0.0.0"
       - "--port"
-      - "30000"
-      # Share GPU with sglang-light: heavy model needs more for KV cache (8B)
-      - "--mem-fraction-static"
-      - "${SGLANG_MEM_FRACTION:-0.60}"
-    ulimits:
-      memlock: -1
-      stack: 67108864
+      - "8000"
     ipc: host
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:30000/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -49,35 +43,29 @@ services:
               count: 1
               capabilities: [gpu]
 
-  sglang-light:
-    image: lmsysorg/sglang:latest
-    container_name: swebench-lite-sglang-light
+  vllm-light:
+    image: vllm/vllm-openai:latest
+    container_name: swebench-lite-vllm-light
     ports:
-      - "30001:30000"
+      - "8001:8000"
+    volumes:
+      - swebench_vllm_cache:/root/.cache/huggingface
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
-    volumes:
-      - sglang_cache:/root/.cache/huggingface
-    entrypoint: ["python3", "-m", "sglang.launch_server"]
     command:
-      - "--model-path"
-      - "${SGLANG_LIGHT_MODEL:-Qwen/Qwen3-4B-Instruct-2507}"
+      - "--model"
+      - "${VLLM_LIGHT_MODEL:-Qwen/Qwen3-4B-Instruct-2507}"
+      - "--enable-auto-tool-choice"
       - "--tool-call-parser"
-      - "qwen"
+      - "hermes"
       - "--host"
       - "0.0.0.0"
       - "--port"
-      - "30000"
-      # Share GPU with sglang: light model (Qwen3-4B); same Qwen3 family as heavy for consistent tool-call parsing
-      - "--mem-fraction-static"
-      - "${SGLANG_LIGHT_MEM_FRACTION:-0.35}"
-    ulimits:
-      memlock: -1
-      stack: 67108864
+      - "8000"
     ipc: host
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:30000/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -95,16 +83,16 @@ services:
       context: ..
       dockerfile: Dockerfile
     image: orla:latest
-    container_name: swebench-lite-orla
+    container_name: swebench-lite-orla-vllm
     ports:
       - "8081:8081"
     command: ["serve", "--config", "/config/orla.yaml"]
     volumes:
-      - ./orla-sglang.yaml:/config/orla.yaml:ro
+      - ./orla-vllm.yaml:/config/orla.yaml:ro
     depends_on:
-      sglang:
+      vllm-heavy:
         condition: service_healthy
-      sglang-light:
+      vllm-light:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8081/api/v1/health"]
@@ -119,7 +107,7 @@ services:
       context: ..
       dockerfile: examples/swe_bench_lite/Dockerfile
     image: orla-swebench-lite:latest
-    container_name: swebench-lite-run
+    container_name: swebench-lite-run-vllm
     environment:
       - ORLA_URL=http://orla:8081
       - WORKDIR_ROOT=/workdir
@@ -127,6 +115,9 @@ services:
       - METRICS_PATH=/output/metrics.json
       - EXPERIMENT_MODE=${EXPERIMENT_MODE:-baseline}
       - RUN_TARGET=${RUN_TARGET:-single_shot_baseline}
+      - BACKEND_PROVIDER=vllm
+      - VLLM_HEAVY_URL=http://vllm-heavy:8000/v1
+      - VLLM_LIGHT_URL=http://vllm-light:8000/v1
     volumes:
       - ./output:/output
       - swebench_workdir:/workdir
@@ -135,5 +126,5 @@ services:
         condition: service_healthy
 
 volumes:
-  sglang_cache: {}
+  swebench_vllm_cache: {}
   swebench_workdir: {}

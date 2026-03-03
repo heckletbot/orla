@@ -71,14 +71,21 @@ func Run(ctx context.Context, ticket string) error {
 	}
 
 	// --- Backends ---
-	lightBackend := orla.NewSGLangBackend(
-		envOr("LIGHT_MODEL", defaultLightModel),
-		envOr("SGLANG_LIGHT_URL", defaultLightURL),
-	)
-	heavyBackend := orla.NewSGLangBackend(
-		envOr("HEAVY_MODEL", defaultHeavyModel),
-		envOr("SGLANG_HEAVY_URL", defaultHeavyURL),
-	)
+	var lightBackend, heavyBackend *orla.LLMBackend
+	if vllmLight := os.Getenv("VLLM_LIGHT_URL"); vllmLight != "" && os.Getenv("VLLM_HEAVY_URL") != "" {
+		vllmHeavy := os.Getenv("VLLM_HEAVY_URL")
+		lightBackend = orla.NewVLLMBackend(envOr("LIGHT_MODEL", defaultLightModel), vllmLight)
+		heavyBackend = orla.NewVLLMBackend(envOr("HEAVY_MODEL", defaultHeavyModel), vllmHeavy)
+	} else {
+		lightBackend = orla.NewSGLangBackend(
+			envOr("LIGHT_MODEL", defaultLightModel),
+			envOr("SGLANG_LIGHT_URL", defaultLightURL),
+		)
+		heavyBackend = orla.NewSGLangBackend(
+			envOr("HEAVY_MODEL", defaultHeavyModel),
+			envOr("SGLANG_HEAVY_URL", defaultHeavyURL),
+		)
+	}
 	if err := client.RegisterBackend(ctx, lightBackend); err != nil {
 		return fmt.Errorf("register light backend: %w", err)
 	}

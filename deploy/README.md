@@ -70,6 +70,20 @@ docker compose -f deploy/docker-compose.sglang.yaml up -d
 
 Daemon API: **http://localhost:8081**. Update `deploy/orla-sglang.yaml` so `llm_servers[0].model` matches the model SGLang serves.
 
+## Multi-backend stacks (workflow demo and SWE-bench)
+
+For the **workflow demo** (customer support triage + resolution) and **SWE-bench Lite** experiments you can use either SGLang or vLLM for the heavy and light models:
+
+| Stack        | SGLang compose                               | vLLM compose                                       |
+|-------------|------------------------------------------------|----------------------------------------------------|
+| Workflow demo | `docker-compose.workflow-demo.yaml`          | `docker-compose.workflow-demo.vllm.yaml`          |
+| SWE-bench Lite | `docker-compose.swebench-lite.yaml`        | `docker-compose.swebench-lite.vllm.yaml`          |
+
+- **Workflow demo**: Start the stack, then run the Go client (see [Multi-Agent Workflow](https://orlaserver.github.io/#/research/orla_workflow_customer_support) in the docs). For vLLM, set `VLLM_LIGHT_URL` and `VLLM_HEAVY_URL` to the service URLs the Orla *container* can resolve (e.g. `VLLM_LIGHT_URL=http://vllm-light:8000/v1 VLLM_HEAVY_URL=http://vllm-heavy:8000/v1 go run ./examples/workflow_demo/cmd/workflow_demo`).
+- **SWE-bench Lite**: The vLLM compose sets `BACKEND_PROVIDER=vllm` and `VLLM_HEAVY_URL` / `VLLM_LIGHT_URL` for the run container. Three modes are available: `single_shot_baseline`, `single_shot_stage_mapping`, and `single_shot_sjf`. Set `RUN_TARGET` to select the mode.
+
+Both vLLM stacks run two vLLM services (heavy on port 8000, light on 8001). Two GPUs are recommended; with one GPU you may need to run the two vLLM containers on different devices or one at a time.
+
 ## Config files
 
 | Backend | Compose file                  | Orla config (mount)   |
