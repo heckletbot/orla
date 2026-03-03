@@ -243,14 +243,24 @@ func NewPredictionEncoder(w io.Writer) *PredictionEncoder {
 	return &PredictionEncoder{enc: enc}
 }
 
-// PredictionEncoder encodes Prediction values as JSONL.
+// PredictionEncoder encodes Prediction values as JSONL and tracks the number written.
 type PredictionEncoder struct {
-	enc *json.Encoder
+	enc   *json.Encoder
+	count int
 }
 
-// Encode writes one prediction line.
+// Encode writes one prediction line and increments the count.
 func (e *PredictionEncoder) Encode(p Prediction) error {
-	return e.enc.Encode(p)
+	if err := e.enc.Encode(p); err != nil {
+		return err
+	}
+	e.count++
+	return nil
+}
+
+// Count returns how many predictions have been written so far.
+func (e *PredictionEncoder) Count() int {
+	return e.count
 }
 
 // ModelName returns the model_name_or_path string for predictions based on mode and backend.

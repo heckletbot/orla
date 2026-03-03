@@ -42,8 +42,11 @@ type RunMetrics struct {
 }
 
 // RunMetricsRecorder records timings for a run. Thread-safe for concurrent AddInstance calls.
+// After each instance completes, a progress line is logged and the metrics file is
+// flushed so you can monitor experiment progress in real time.
 type RunMetricsRecorder struct {
 	ExperimentName string
+	TotalJobs      int
 	startTime      time.Time
 	endTime        time.Time
 	instances      []InstanceMetrics
@@ -66,19 +69,31 @@ func (r *RunMetricsRecorder) EndRun() {
 	log.Printf("[metrics] run: duration=%dms", r.endTime.Sub(r.startTime).Milliseconds())
 }
 
-// AddInstance appends instance metrics. Thread-safe.
+// AddInstance appends instance metrics, logs progress, and flushes the metrics file. Thread-safe.
 func (r *RunMetricsRecorder) AddInstance(inst InstanceMetrics) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	log.Printf("[metrics] instance %s: stage=%s, duration=%dms, prompt_tokens=%d, completion_tokens=%d, queue_wait=%dms, ttft=%dms",
-		inst.InstanceID, inst.MappedStage, inst.DurationMs,
-		inst.PromptTokens, inst.CompletionTokens,
-		inst.QueueWaitMs, inst.TTFTMs)
 	r.instances = append(r.instances, inst)
+	done := len(r.instances)
+	log.Printf("[%d/%d] %s: stage=%s duration=%dms queue_wait=%dms ttft=%dms prompt_tokens=%d completion_tokens=%d",
+		done, r.TotalJobs,
+		inst.InstanceID, inst.MappedStage, inst.DurationMs,
+		inst.QueueWaitMs, inst.TTFTMs,
+		inst.PromptTokens, inst.CompletionTokens)
+	if err := r.writeLocked(""); err != nil {
+		log.Printf("warning: flush metrics: %v", err)
+	}
 }
 
-// Write writes the collected metrics to path. Uses MetricsPath if path is empty.
+// Write writes the collected metrics to path. Uses MetricsPath if path is empty. Thread-safe.
 func (r *RunMetricsRecorder) Write(path string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.writeLocked(path)
+}
+
+// writeLocked serialises and writes current metrics. Caller must hold r.mu.
+func (r *RunMetricsRecorder) writeLocked(path string) error {
 	if path == "" {
 		path = os.Getenv("METRICS_PATH")
 		if path == "" {

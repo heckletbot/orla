@@ -172,6 +172,7 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset, mode string) 
 	var encMu sync.Mutex
 
 	metrics := shared.NewRunMetricsRecorder("single_shot_" + mode)
+	metrics.TotalJobs = len(jobs)
 	metrics.BeginRun()
 	defer func() {
 		metrics.EndRun()
@@ -185,7 +186,7 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset, mode string) 
 		wg.Add(1)
 		go func(j instanceJob) {
 			defer wg.Done()
-			submitJob(ctx, j, enc, &encMu, metrics, mode)
+			submitJob(ctx, j, enc, &encMu, outFile, metrics, mode)
 		}(job)
 	}
 	wg.Wait()
@@ -194,7 +195,7 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset, mode string) 
 	return nil
 }
 
-func submitJob(ctx context.Context, j instanceJob, enc *shared.PredictionEncoder, encMu *sync.Mutex, metrics *shared.RunMetricsRecorder, mode string) {
+func submitJob(ctx context.Context, j instanceJob, enc *shared.PredictionEncoder, encMu *sync.Mutex, outFile *os.File, metrics *shared.RunMetricsRecorder, mode string) {
 	stage := j.stage
 	if j.priority > 0 {
 		p := j.priority
@@ -240,12 +241,18 @@ func submitJob(ctx context.Context, j instanceJob, enc *shared.PredictionEncoder
 	metrics.AddInstance(inst)
 
 	encMu.Lock()
+	predCount := enc.Count()
 	if encErr := enc.Encode(shared.Prediction{
 		InstanceID:      j.inst.InstanceID,
 		ModelNameOrPath: shared.ModelName(mode),
 		ModelPatch:      patch,
 	}); encErr != nil {
 		log.Printf("warning: encode prediction %s: %v", j.inst.InstanceID, encErr)
+	} else {
+		log.Printf("[prediction %d] %s: patch=%d chars", predCount+1, j.inst.InstanceID, len(patch))
+	}
+	if syncErr := outFile.Sync(); syncErr != nil {
+		log.Printf("warning: sync predictions: %v", syncErr)
 	}
 	encMu.Unlock()
 }
