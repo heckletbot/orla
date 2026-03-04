@@ -6,16 +6,24 @@
 //	Workflow
 //	  |
 //	  +-- Agent "triage" (light model, FCFS)
-//	  |     +-- Stage "classify"   (classify ticket: category + entities, structured output)
-//	  |     +-- Stage "prioritize" (assign severity & priority score; depends on "classify")
+//	  |     +-- Stage "classify"   (category + key issue, structured output)
+//	  |     +-- Stage "sentiment"  (sentiment + urgency signals, structured output)
+//	  |     |   (classify and sentiment run in parallel — no dependency between them)
+//	  |     +-- Stage "prioritize" (severity + priority score; depends on both classify and sentiment)
 //	  |
 //	  +-- Agent "resolver" (heavy model, Priority scheduling; depends on "triage")
-//	        +-- Stage "draft_response" (generate personalized reply using triage output)
-//	        +-- Stage "qa_check"       (review for policy compliance; depends on "draft_response")
+//	  |     +-- Stage "draft_response" (personalized reply using triage context)
+//	  |     +-- Stage "policy_check"   (identify applicable policies using triage context)
+//	  |     |   (draft_response and policy_check run in parallel)
+//	  |     +-- Stage "final_review"   (review draft against policies; depends on both)
+//	  |
+//	  +-- Agent "escalation" (light model, FCFS; depends on "triage", parallel with "resolver")
+//	        +-- Stage "route_ticket"   (escalation decision, structured output)
 package workflowdemo
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -31,7 +39,7 @@ const (
 	defaultHeavyModel = "Qwen/Qwen3-8B"
 )
 
-var triageSchema = map[string]any{
+var classifySchema = map[string]any{
 	"type": "object",
 	"properties": map[string]any{
 		"category": map[string]any{
@@ -42,16 +50,66 @@ var triageSchema = map[string]any{
 			"type":        "string",
 			"description": "Product or service mentioned in the ticket",
 		},
-		"customer_sentiment": map[string]any{
-			"type": "string",
-			"enum": []any{"frustrated", "neutral", "positive"},
-		},
 		"key_issue": map[string]any{
 			"type":        "string",
 			"description": "One-sentence summary of the core issue",
 		},
 	},
-	"required": []any{"category", "product", "customer_sentiment", "key_issue"},
+	"required": []any{"category", "product", "key_issue"},
+}
+
+var sentimentSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"sentiment": map[string]any{
+			"type": "string",
+			"enum": []any{"frustrated", "neutral", "positive"},
+		},
+		"urgency_signals": map[string]any{
+			"type":        "array",
+			"items":       map[string]any{"type": "string"},
+			"description": "Phrases or cues from the ticket that indicate urgency",
+		},
+	},
+	"required": []any{"sentiment", "urgency_signals"},
+}
+
+var prioritySchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"severity": map[string]any{
+			"type": "string",
+			"enum": []any{"critical", "high", "medium", "low"},
+		},
+		"priority": map[string]any{
+			"type":        "integer",
+			"description": "Scheduling priority from 1 (lowest) to 10 (highest)",
+		},
+		"reasoning": map[string]any{
+			"type":        "string",
+			"description": "One-sentence explanation of the severity assignment",
+		},
+	},
+	"required": []any{"severity", "priority", "reasoning"},
+}
+
+var escalationSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"escalate": map[string]any{
+			"type":        "boolean",
+			"description": "Whether this ticket requires human escalation",
+		},
+		"reason": map[string]any{
+			"type":        "string",
+			"description": "One-sentence explanation of the escalation decision",
+		},
+		"suggested_team": map[string]any{
+			"type": "string",
+			"enum": []any{"billing", "technical", "account_management", "none"},
+		},
+	},
+	"required": []any{"escalate", "reason", "suggested_team"},
 }
 
 func envOr(key, fallback string) string {
@@ -93,7 +151,12 @@ func Run(ctx context.Context, ticket string) error {
 		return fmt.Errorf("register heavy backend: %w", err)
 	}
 
-	// --- Agent 1: triage (light model, two-stage DAG) ---
+	// --- Agent 1: triage (light model, three-stage diamond DAG) ---
+	//
+	//   classify ──┐
+	//              ├──▶ prioritize
+	//   sentiment ─┘
+	//
 	triage := orla.NewAgent(client)
 	triage.Name = "triage"
 
@@ -101,25 +164,41 @@ func Run(ctx context.Context, ticket string) error {
 	classifyStage.SetMaxTokens(512)
 	classifyStage.SetTemperature(0)
 	classifyStage.SetSchedulingPolicy(orla.SchedulingPolicyFCFS)
-	classifyStage.SetResponseFormat(orla.NewStructuredOutputRequest("ticket_triage", triageSchema))
+	classifyStage.SetResponseFormat(orla.NewStructuredOutputRequest("ticket_classify", classifySchema))
 	classifyStage.Prompt = fmt.Sprintf(
-		"You are a customer support triage system. Classify this support ticket and extract key information.\n\nTicket:\n%s", ticket)
+		"You are a customer support triage system. Classify this support ticket: extract the category, product, and a one-sentence summary of the core issue.\n\nTicket:\n%s", ticket)
+
+	sentimentStage := orla.NewStage("sentiment", lightBackend)
+	sentimentStage.SetMaxTokens(256)
+	sentimentStage.SetTemperature(0)
+	sentimentStage.SetSchedulingPolicy(orla.SchedulingPolicyFCFS)
+	sentimentStage.SetResponseFormat(orla.NewStructuredOutputRequest("ticket_sentiment", sentimentSchema))
+	sentimentStage.Prompt = fmt.Sprintf(
+		"You are a customer support sentiment analyzer. Determine the customer's sentiment and list any phrases that signal urgency.\n\nTicket:\n%s", ticket)
 
 	prioritizeStage := orla.NewStage("prioritize", lightBackend)
 	prioritizeStage.SetMaxTokens(256)
 	prioritizeStage.SetTemperature(0)
 	prioritizeStage.SetSchedulingPolicy(orla.SchedulingPolicyFCFS)
+	prioritizeStage.SetResponseFormat(orla.NewStructuredOutputRequest("ticket_priority", prioritySchema))
 	prioritizeStage.SetPromptBuilder(func(results map[string]*orla.StageResult) (string, error) {
 		classification, ok := results[classifyStage.ID]
 		if !ok {
 			return "", fmt.Errorf("missing classify stage result")
 		}
+		sentiment, ok := results[sentimentStage.ID]
+		if !ok {
+			return "", fmt.Errorf("missing sentiment stage result")
+		}
 		return fmt.Sprintf(
-			"Given this ticket classification, assign a severity (critical / high / medium / low) and explain why in one sentence.\n\nClassification:\n%s",
-			classification.Response.Content), nil
+			"Given this ticket classification and sentiment analysis, assign a severity (critical / high / medium / low) and a scheduling priority from 1 (lowest) to 10 (highest). Explain why in one sentence.\n\nClassification:\n%s\n\nSentiment:\n%s",
+			classification.Response.Content, sentiment.Response.Content), nil
 	})
 
 	if err := triage.AddStage(classifyStage); err != nil {
+		return err
+	}
+	if err := triage.AddStage(sentimentStage); err != nil {
 		return err
 	}
 	if err := triage.AddStage(prioritizeStage); err != nil {
@@ -128,8 +207,16 @@ func Run(ctx context.Context, ticket string) error {
 	if err := triage.AddDependency(prioritizeStage.ID, classifyStage.ID); err != nil {
 		return err
 	}
+	if err := triage.AddDependency(prioritizeStage.ID, sentimentStage.ID); err != nil {
+		return err
+	}
 
-	// --- Agent 2: resolver (heavy model, two-stage DAG) ---
+	// --- Agent 2: resolver (heavy model, three-stage diamond DAG) ---
+	//
+	//   draft_response ──┐
+	//                    ├──▶ final_review
+	//   policy_check ────┘
+	//
 	resolver := orla.NewAgent(client)
 	resolver.Name = "resolver"
 
@@ -137,35 +224,62 @@ func Run(ctx context.Context, ticket string) error {
 	draftStage.SetMaxTokens(1024)
 	draftStage.SetTemperature(0.3)
 	draftStage.SetSchedulingPolicy(orla.SchedulingPolicyPriority)
-	priority := 5
-	draftStage.SetSchedulingHints(&orla.SchedulingHints{Priority: &priority})
 
-	qaStage := orla.NewStage("qa_check", heavyBackend)
-	qaStage.SetMaxTokens(512)
-	qaStage.SetTemperature(0)
-	qaStage.SetSchedulingPolicy(orla.SchedulingPolicyPriority)
-	qaStage.SetPromptBuilder(func(results map[string]*orla.StageResult) (string, error) {
+	policyStage := orla.NewStage("policy_check", heavyBackend)
+	policyStage.SetMaxTokens(512)
+	policyStage.SetTemperature(0)
+	policyStage.SetSchedulingPolicy(orla.SchedulingPolicyPriority)
+
+	reviewStage := orla.NewStage("final_review", heavyBackend)
+	reviewStage.SetMaxTokens(512)
+	reviewStage.SetTemperature(0)
+	reviewStage.SetSchedulingPolicy(orla.SchedulingPolicyPriority)
+	reviewStage.SetPromptBuilder(func(results map[string]*orla.StageResult) (string, error) {
 		draft, ok := results[draftStage.ID]
 		if !ok {
 			return "", fmt.Errorf("missing draft_response stage result")
 		}
+		policies, ok := results[policyStage.ID]
+		if !ok {
+			return "", fmt.Errorf("missing policy_check stage result")
+		}
 		return fmt.Sprintf(
-			"You are a QA reviewer for customer support responses. Check this draft reply for: (1) policy compliance, (2) professional tone, (3) completeness. If it passes, output APPROVED. If not, explain what to fix.\n\nDraft Reply:\n%s",
-			draft.Response.Content), nil
+			"You are a QA reviewer for customer support responses. Review this draft reply against the applicable policies below. Check for: (1) policy compliance, (2) professional tone, (3) completeness. If it passes, output APPROVED followed by a brief summary. If not, explain what to fix.\n\nDraft Reply:\n%s\n\nApplicable Policies:\n%s",
+			draft.Response.Content, policies.Response.Content), nil
 	})
 
 	if err := resolver.AddStage(draftStage); err != nil {
 		return err
 	}
-	if err := resolver.AddStage(qaStage); err != nil {
+	if err := resolver.AddStage(policyStage); err != nil {
 		return err
 	}
-	if err := resolver.AddDependency(qaStage.ID, draftStage.ID); err != nil {
+	if err := resolver.AddStage(reviewStage); err != nil {
+		return err
+	}
+	if err := resolver.AddDependency(reviewStage.ID, draftStage.ID); err != nil {
+		return err
+	}
+	if err := resolver.AddDependency(reviewStage.ID, policyStage.ID); err != nil {
+		return err
+	}
+
+	// --- Agent 3: escalation (light model, single stage; parallel with resolver) ---
+	escalation := orla.NewAgent(client)
+	escalation.Name = "escalation"
+
+	routeStage := orla.NewStage("route_ticket", lightBackend)
+	routeStage.SetMaxTokens(256)
+	routeStage.SetTemperature(0)
+	routeStage.SetSchedulingPolicy(orla.SchedulingPolicyFCFS)
+	routeStage.SetResponseFormat(orla.NewStructuredOutputRequest("ticket_escalation", escalationSchema))
+
+	if err := escalation.AddStage(routeStage); err != nil {
 		return err
 	}
 
 	// --- Stage Mapping (validation) ---
-	allStages := []*orla.Stage{classifyStage, prioritizeStage, draftStage, qaStage}
+	allStages := []*orla.Stage{classifyStage, sentimentStage, prioritizeStage, draftStage, policyStage, reviewStage, routeStage}
 	mapping := &orla.ExplicitStageMapping{}
 	output, err := mapping.Map(&orla.StageMappingInput{
 		Stages:   allStages,
@@ -187,18 +301,33 @@ func Run(ctx context.Context, ticket string) error {
 	if err := wf.AddAgent(resolver); err != nil {
 		return err
 	}
+	if err := wf.AddAgent(escalation); err != nil {
+		return err
+	}
 	if err := wf.AddDependency("resolver", "triage"); err != nil {
 		return err
 	}
+	if err := wf.AddDependency("escalation", "triage"); err != nil {
+		return err
+	}
 
-	// Context passing: feed triage output into resolver's draft prompt.
+	// Context passing: feed triage output into the resolver and escalation agents.
+	// Both run in parallel after triage completes.
 	wf.SetContextPassingFn(func(upstreamResults map[string]*orla.AgentResult, downstream *orla.Agent) error {
-		if downstream.Name != "resolver" {
-			return nil
-		}
 		triageResult, ok := upstreamResults["triage"]
 		if !ok {
 			return nil
+		}
+
+		var classifyOutput, sentimentOutput, prioritizeOutput string
+		if cr, ok := triageResult.StageResults[classifyStage.ID]; ok && cr.Response != nil {
+			classifyOutput = cr.Response.Content
+		}
+		if sr, ok := triageResult.StageResults[sentimentStage.ID]; ok && sr.Response != nil {
+			sentimentOutput = sr.Response.Content
+		}
+		if pr, ok := triageResult.StageResults[prioritizeStage.ID]; ok && pr.Response != nil {
+			prioritizeOutput = pr.Response.Content
 		}
 
 		var triageOutput string
@@ -208,12 +337,42 @@ func Run(ctx context.Context, ticket string) error {
 			}
 		}
 
-		stages := downstream.Stages()
-		for _, s := range stages {
-			if s.Name == "draft_response" {
-				s.Prompt = fmt.Sprintf(
-					"You are a customer support agent. Write a helpful, professional reply to this customer based on the triage analysis below. Address their specific issue, apologize if appropriate, and provide clear next steps.\n\nTriage Analysis:\n%s\n\nOriginal Ticket:\n%s",
-					triageOutput, ticket)
+		priority := 5
+		if prioritizeOutput != "" {
+			var p struct {
+				Priority int `json:"priority"`
+			}
+			if err := json.Unmarshal([]byte(prioritizeOutput), &p); err == nil && p.Priority > 0 {
+				priority = p.Priority
+			}
+		}
+
+		switch downstream.Name {
+		case "resolver":
+			log.Printf("Triage assigned scheduling priority %d to resolver", priority)
+			stages := downstream.Stages()
+			for _, s := range stages {
+				s.SetSchedulingHints(&orla.SchedulingHints{Priority: &priority})
+				switch s.Name {
+				case "draft_response":
+					s.Prompt = fmt.Sprintf(
+						"You are a customer support agent. Write a helpful, professional reply to this customer based on the triage analysis below. Address their specific issue, apologize if appropriate, and provide clear next steps.\n\nTriage Analysis:\n%s\n\nOriginal Ticket:\n%s",
+						triageOutput, ticket)
+				case "policy_check":
+					s.Prompt = fmt.Sprintf(
+						"You are a support policy specialist. Given the ticket classification and sentiment below, identify all applicable support policies, refund rules, SLA commitments, and any constraints the response agent must follow.\n\nClassification:\n%s\n\nSentiment:\n%s\n\nOriginal Ticket:\n%s",
+						classifyOutput, sentimentOutput, ticket)
+				}
+			}
+
+		case "escalation":
+			stages := downstream.Stages()
+			for _, s := range stages {
+				if s.Name == "route_ticket" {
+					s.Prompt = fmt.Sprintf(
+						"You are a support escalation router. Based on the triage analysis below, decide whether this ticket requires human escalation. Consider the severity, customer sentiment, and whether the issue can be resolved automatically.\n\nClassification:\n%s\n\nSentiment:\n%s\n\nPriority Assessment:\n%s\n\nOriginal Ticket:\n%s",
+						classifyOutput, sentimentOutput, prioritizeOutput, ticket)
+				}
 			}
 		}
 		return nil
