@@ -220,20 +220,25 @@ func Run(ctx context.Context, ticket string) error {
 	resolver := orla.NewAgent(client)
 	resolver.Name = "resolver"
 
+	noThinking := map[string]any{"enable_thinking": false}
+
 	draftStage := orla.NewStage("draft_response", heavyBackend)
 	draftStage.SetMaxTokens(1024)
 	draftStage.SetTemperature(0.3)
 	draftStage.SetSchedulingPolicy(orla.SchedulingPolicyPriority)
+	draftStage.SetChatTemplateKwargs(noThinking)
 
 	policyStage := orla.NewStage("policy_check", heavyBackend)
 	policyStage.SetMaxTokens(512)
 	policyStage.SetTemperature(0)
 	policyStage.SetSchedulingPolicy(orla.SchedulingPolicyPriority)
+	policyStage.SetChatTemplateKwargs(noThinking)
 
 	reviewStage := orla.NewStage("final_review", heavyBackend)
 	reviewStage.SetMaxTokens(512)
 	reviewStage.SetTemperature(0)
 	reviewStage.SetSchedulingPolicy(orla.SchedulingPolicyPriority)
+	reviewStage.SetChatTemplateKwargs(noThinking)
 	reviewStage.SetPromptBuilder(func(results map[string]*orla.StageResult) (string, error) {
 		draft, ok := results[draftStage.ID]
 		if !ok {
@@ -386,10 +391,15 @@ func Run(ctx context.Context, ticket string) error {
 	}
 
 	// --- Print results ---
+	stageNames := make(map[string]string, len(allStages))
+	for _, s := range allStages {
+		stageNames[s.ID] = s.Name
+	}
 	for agentName, agentResult := range results {
 		log.Printf("=== Agent: %s ===", agentName)
 		for stageID, stageResult := range agentResult.StageResults {
-			log.Printf("  Stage %s:", stageID)
+			name := stageNames[stageID]
+			log.Printf("  %s (stage id: %s):", name, stageID)
 			if stageResult.Response != nil {
 				content := stageResult.Response.Content
 				if len(content) > 500 {
