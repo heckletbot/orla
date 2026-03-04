@@ -431,6 +431,6 @@ really slowly for the past week. Sometimes it takes 30+ seconds.
 Is there something going on with the servers?
 
 Thanks,
-Alex Johnson
-Account: alex.johnson@email.com
+Leonhard Euler
+Account: leonhard.euler@email.com
 Plan: Pro ($49.99/month)`
