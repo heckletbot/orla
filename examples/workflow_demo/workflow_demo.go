@@ -5,7 +5,7 @@
 //
 //	Workflow
 //	  |
-//	  +-- Stage "classify"       (structured output: category, product, key issue, customer request)
+//	  +-- Stage "classify"       (structured output: category, product, key issue, customer request, needs_escalation)
 //	  |
 //	  +-- Stage "policy_check"   (agent-loop: reads policy YAML via tool, returns accept/deny + reasoning)
 //	  |     depends on: classify
@@ -13,8 +13,11 @@
 //	  +-- Stage "reply"          (agent-loop: composes and sends customer email via tool, structured confirmation)
 //	  |     depends on: policy_check
 //	  |
-//	  +-- Stage "route_ticket"   (agent-loop: notifies team, reads team descriptions, sends internal ticket)
+//	  +-- Stage "route_ticket"   (agent-loop: routes to human team if escalation needed, or notifies team of auto-resolution)
 //	        depends on: classify
+//
+//	classify ──┬──▶ policy_check ──▶ reply
+//	           └──▶ route_ticket
 //
 //	Stage 3 (reply) and Stage 4 (route_ticket) run in parallel once their
 //	respective dependencies are satisfied.
@@ -61,8 +64,16 @@ var classifySchema = map[string]any{
 			"type":        "string",
 			"description": "What the customer is actually asking for",
 		},
+		"needs_escalation": map[string]any{
+			"type":        "boolean",
+			"description": "Whether this ticket requires human team intervention (true) or can be fully resolved automatically (false)",
+		},
+		"escalation_reason": map[string]any{
+			"type":        "string",
+			"description": "If needs_escalation is true, explain why human intervention is needed",
+		},
 	},
-	"required": []any{"category", "product", "key_issue", "customer_request"},
+	"required": []any{"category", "product", "key_issue", "customer_request", "needs_escalation"},
 }
 
 var policyDecisionSchema = map[string]any{
@@ -363,7 +374,11 @@ func Run(ctx context.Context, ticket string) error {
 	classifyStage.Prompt = fmt.Sprintf(
 		"You are a customer support triage system. Classify this support ticket.\n"+
 			"Extract the category, product, a one-sentence summary of the core issue, "+
-			"and what the customer is actually asking for.\n\nTicket:\n%s", ticket)
+			"and what the customer is actually asking for.\n\n"+
+			"Also decide whether this ticket needs human team escalation. Set needs_escalation "+
+			"to true if the issue is ambiguous, involves multiple departments, requires manual "+
+			"verification, or cannot be resolved by automated policy lookup alone. Set it to "+
+			"false if standard policy can fully resolve it.\n\nTicket:\n%s", ticket)
 
 	// -----------------------------------------------------------------------
 	// Stage 2: policy_check (agent-loop, tool: read_policy_yaml, heavy model)
@@ -468,8 +483,8 @@ func Run(ctx context.Context, ticket string) error {
 	//          send_ticket; heavy model)
 	//
 	//   Input:  Output(classify) + Email + System Prompt
-	//   Flow:   Gen → Tool(send_email) → Gen → Tool(read_team_descriptions) → Gen
-	//           → Tool(send_ticket) → Gen → Output(summary)
+	//   If needs_escalation: read teams → route ticket to human team
+	//   If !needs_escalation: notify team that ticket is being resolved automatically
 	//   Output: Free-text summary
 	//   Depends on: classify
 	// -----------------------------------------------------------------------
@@ -508,14 +523,42 @@ func Run(ctx context.Context, ticket string) error {
 		if !ok {
 			return "", fmt.Errorf("missing classify stage result")
 		}
+
+		var classifyOut struct {
+			NeedsEscalation  bool   `json:"needs_escalation"`
+			EscalationReason string `json:"escalation_reason"`
+		}
+		if err := json.Unmarshal([]byte(classification.Response.Content), &classifyOut); err != nil {
+			log.Printf("warning: failed to parse classify output for escalation decision: %v", err)
+		}
+
+		if classifyOut.NeedsEscalation {
+			return fmt.Sprintf(
+				"You are an internal support ticket router. The triage system determined "+
+					"this ticket NEEDS HUMAN ESCALATION.\n\n"+
+					"Escalation reason: %s\n\n"+
+					"Your job is to:\n"+
+					"1. Read the available team descriptions (use the read_team_descriptions tool) "+
+					"to determine which team should handle this ticket.\n"+
+					"2. Create an internal support ticket routed to the appropriate team "+
+					"(use the send_ticket tool). Include the escalation reason.\n"+
+					"3. Send an email to the assigned team (use the send_email tool) alerting them "+
+					"to the escalated ticket.\n\n"+
+					"After completing all steps, provide a brief summary of what was done.\n\n"+
+					"Ticket Classification:\n%s\n\nOriginal Ticket:\n%s",
+				classifyOut.EscalationReason,
+				classification.Response.Content, ticket), nil
+		}
+
 		return fmt.Sprintf(
-			"You are an internal support ticket router. Your job is to:\n\n"+
-				"1. Send an acknowledgment email to the customer confirming their ticket was received "+
-				"(use the send_email tool; extract the customer's email from the original ticket).\n"+
-				"2. Read the available team descriptions (use the read_team_descriptions tool) "+
-				"to determine which team should handle this ticket.\n"+
-				"3. Create an internal support ticket routed to the appropriate team "+
-				"(use the send_ticket tool).\n\n"+
+			"You are an internal support ticket router. The triage system determined "+
+				"this ticket does NOT need human escalation -- it is being resolved "+
+				"automatically by the policy check and reply stages.\n\n"+
+				"Your job is to:\n"+
+				"1. Read the available team descriptions (use the read_team_descriptions tool) "+
+				"to identify the team responsible for this category.\n"+
+				"2. Send an informational email to that team (use the send_email tool) letting "+
+				"them know the ticket is being handled automatically by the system.\n\n"+
 				"After completing all steps, provide a brief summary of what was done.\n\n"+
 				"Ticket Classification:\n%s\n\nOriginal Ticket:\n%s",
 			classification.Response.Content, ticket), nil
@@ -544,8 +587,7 @@ func Run(ctx context.Context, ticket string) error {
 	log.Printf("Stage mapping validated: %d stages assigned to backends", len(output.Assignments))
 
 	// --- Dependencies ---
-	//   classify → policy_check → reply
-	//   classify → route_ticket
+	//   classify → policy_check → reply → route_ticket
 	if err := wf.AddDependency(policyStage.ID, classifyStage.ID); err != nil {
 		return err
 	}
