@@ -199,11 +199,12 @@ func (s *AgenticServer) handleExecuteStream(w http.ResponseWriter, ctx context.C
 
 // RegisterBackendRequest is the request body for registering an LLM backend.
 type RegisterBackendRequest struct {
-	Name         string `json:"name"`                      // backend name (used as "backend" in execute requests)
-	Endpoint     string `json:"endpoint"`                  // e.g. "http://vllm:8000/v1", "http://localhost:11434"
-	Type         string `json:"type"`                      // "openai" or "ollama" or "sglang"
-	ModelID      string `json:"model_id"`                  // full model identifier e.g. "openai:Qwen/Qwen3-4B-Instruct-2507", "ollama:llama3"
-	APIKeyEnvVar string `json:"api_key_env_var,omitempty"` // optional env var name for API key (for openai-type backends)
+	Name           string `json:"name"`                        // backend name (used as "backend" in execute requests)
+	Endpoint       string `json:"endpoint"`                    // e.g. "http://vllm:8000/v1", "http://localhost:11434"
+	Type           string `json:"type"`                        // "openai" or "ollama" or "sglang"
+	ModelID        string `json:"model_id"`                    // full model identifier e.g. "openai:Qwen/Qwen3-4B-Instruct-2507", "ollama:llama3"
+	APIKeyEnvVar   string `json:"api_key_env_var,omitempty"`   // optional env var name for API key (for openai-type backends)
+	MaxConcurrency int    `json:"max_concurrency,omitempty"`   // max concurrent requests to this backend (default 1)
 }
 
 // RegisterBackendResponse is the response body for register backend.
@@ -251,16 +252,18 @@ func (s *AgenticServer) handleRegisterBackend(w http.ResponseWriter, r *http.Req
 	}
 
 	backend := &core.LLMBackend{
-		Endpoint:     req.Endpoint,
-		Type:         backendType,
-		APIKeyEnvVar: req.APIKeyEnvVar,
+		Endpoint:       req.Endpoint,
+		Type:           backendType,
+		APIKeyEnvVar:   req.APIKeyEnvVar,
+		MaxConcurrency: req.MaxConcurrency,
 	}
 	s.layer.AddLLMBackend(req.Name, backend, req.ModelID)
 
 	zap.L().Info("Registered LLM backend",
 		zap.String("name", req.Name),
 		zap.String("endpoint", req.Endpoint),
-		zap.String("model_id", req.ModelID))
+		zap.String("model_id", req.ModelID),
+		zap.Int("max_concurrency", req.MaxConcurrency))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

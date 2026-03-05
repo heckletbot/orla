@@ -1,11 +1,17 @@
 package serving
 
 import (
+	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/dorcha-inc/orla/internal/core"
 	"github.com/dorcha-inc/orla/internal/model"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSelectNextStageKey_FCFSPrefersOldestAcrossStages(t *testing.T) {
@@ -151,4 +157,102 @@ func TestSelectNextRequest_PriorityTieBreaksByOldest(t *testing.T) {
 func TestSelectNextRequest_SingleElement(t *testing.T) {
 	queue := []*scheduledRequest{{opts: model.InferenceOptions{}}}
 	assert.Equal(t, 0, selectNextRequest(queue))
+}
+
+// --- backendExecutor concurrency tests ---
+
+type delayProvider struct {
+	delay      time.Duration
+	inflight   atomic.Int32
+	maxSeen    atomic.Int32
+	callCount  atomic.Int32
+}
+
+func (p *delayProvider) Name() string { return "delay" }
+
+func (p *delayProvider) Chat(_ context.Context, _ []model.Message, _ []*mcp.Tool, _ model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
+	p.callCount.Add(1)
+	cur := p.inflight.Add(1)
+	for {
+		old := p.maxSeen.Load()
+		if cur <= old || p.maxSeen.CompareAndSwap(old, cur) {
+			break
+		}
+	}
+	time.Sleep(p.delay)
+	p.inflight.Add(-1)
+	return &model.Response{Content: "ok"}, nil, nil
+}
+
+func (p *delayProvider) EnsureReady(_ context.Context) error { return nil }
+
+func TestBackendExecutor_DefaultConcurrencyIsSerial(t *testing.T) {
+	manager := NewLLMBackendManager()
+	manager.AddLLMBackend("b", &core.LLMBackend{
+		Type: core.LLMInferenceAPITypeOllama, Endpoint: "http://localhost:11434",
+	}, "ollama:m")
+
+	dp := &delayProvider{delay: 50 * time.Millisecond}
+	manager.mu.Lock()
+	manager.providers["b"] = dp
+	manager.mu.Unlock()
+
+	const n = 4
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for range n {
+		go func() {
+			defer wg.Done()
+			_, _, err := manager.ScheduleChat(context.Background(), "b", "s", []model.Message{{Role: "user", Content: "hi"}}, nil, model.InferenceOptions{})
+			assert.NoError(t, err)
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, int32(n), dp.callCount.Load())
+	assert.Equal(t, int32(1), dp.maxSeen.Load(), "default concurrency should be serial (max 1 in-flight)")
+}
+
+func TestBackendExecutor_ConcurrencyRespected(t *testing.T) {
+	const concurrency = 3
+	manager := NewLLMBackendManager()
+	manager.AddLLMBackend("b", &core.LLMBackend{
+		Type: core.LLMInferenceAPITypeOllama, Endpoint: "http://localhost:11434",
+		MaxConcurrency: concurrency,
+	}, "ollama:m")
+
+	dp := &delayProvider{delay: 100 * time.Millisecond}
+	manager.mu.Lock()
+	manager.providers["b"] = dp
+	manager.mu.Unlock()
+
+	const n = 6
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for range n {
+		go func() {
+			defer wg.Done()
+			_, _, err := manager.ScheduleChat(context.Background(), "b", "s", []model.Message{{Role: "user", Content: "hi"}}, nil, model.InferenceOptions{})
+			assert.NoError(t, err)
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, int32(n), dp.callCount.Load())
+	require.LessOrEqual(t, dp.maxSeen.Load(), int32(concurrency), "should not exceed max concurrency")
+	assert.Greater(t, dp.maxSeen.Load(), int32(1), "should utilize multiple workers")
+}
+
+func TestNewBackendExecutor_ClampsZeroToOne(t *testing.T) {
+	manager := NewLLMBackendManager()
+	exec := newBackendExecutor("test", manager, 0)
+	defer exec.close()
+	assert.Equal(t, 1, exec.maxConcurrency)
+}
+
+func TestNewBackendExecutor_ClampsNegativeToOne(t *testing.T) {
+	manager := NewLLMBackendManager()
+	exec := newBackendExecutor("test", manager, -5)
+	defer exec.close()
+	assert.Equal(t, 1, exec.maxConcurrency)
 }

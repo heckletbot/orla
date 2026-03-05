@@ -26,4 +26,8 @@ type LLMBackend struct {
 	// Orla *does not* allow you to store the API key in the config file. You must use an environment variable.
 	// This is to prevent the API key from being accidentally logged or leaked.
 	APIKeyEnvVar string `yaml:"api_key_env_var,omitempty" mapstructure:"api_key_env_var"`
+	// MaxConcurrency is the maximum number of concurrent inference requests dispatched
+	// to this backend. Backends like vLLM and SGLang support continuous batching and can
+	// process multiple requests simultaneously. A value of 0 or 1 means serial dispatch.
+	MaxConcurrency int `yaml:"max_concurrency,omitempty" mapstructure:"max_concurrency"`
 }

@@ -13,8 +13,9 @@ import (
 )
 
 type backendEntry struct {
-	backend *core.LLMBackend
-	modelID string
+	backend        *core.LLMBackend
+	modelID        string
+	maxConcurrency int
 }
 
 // LLMBackendManager manages a pool of LLM backend configurations and their providers
@@ -34,12 +35,15 @@ func NewLLMBackendManager() *LLMBackendManager {
 	}
 }
 
-// AddLLMBackend registers an LLM backend by name
+// AddLLMBackend registers an LLM backend by name.
 func (m *LLMBackendManager) AddLLMBackend(name string, backend *core.LLMBackend, modelID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.backends[name] = &backendEntry{backend: backend, modelID: modelID}
-	// clear cached providers and executors for this backend
+	m.backends[name] = &backendEntry{
+		backend:        backend,
+		modelID:        modelID,
+		maxConcurrency: backend.MaxConcurrency,
+	}
 	delete(m.providers, name)
 	if exec, ok := m.executors[name]; ok {
 		exec.close()
@@ -84,13 +88,14 @@ func (m *LLMBackendManager) GetModelProvider(ctx context.Context, backendName st
 }
 
 func (m *LLMBackendManager) getOrCreateExecutorLocked(backendName string) (*backendExecutor, error) {
-	if _, exists := m.backends[backendName]; !exists {
+	entry, exists := m.backends[backendName]
+	if !exists {
 		return nil, fmt.Errorf("llm_backend '%s' not found", backendName)
 	}
 	if exec, ok := m.executors[backendName]; ok {
 		return exec, nil
 	}
-	exec := newBackendExecutor(backendName, m)
+	exec := newBackendExecutor(backendName, m, entry.maxConcurrency)
 	m.executors[backendName] = exec
 	return exec, nil
 }

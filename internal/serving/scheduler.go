@@ -9,6 +9,7 @@ import (
 
 	"github.com/dorcha-inc/orla/internal/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.uber.org/zap"
 )
 
 const defaultBackendQueueCapacity = 1024
@@ -32,10 +33,12 @@ type scheduledResult struct {
 	err      error
 }
 
-// backendExecutor serializes request execution for one backend and applies a scheduling policy.
+// backendExecutor dispatches requests for one backend and applies a scheduling policy.
+// It runs a configurable number of worker goroutines; concurrency defaults to 1 (serial).
 type backendExecutor struct {
-	backendName string
-	manager     *LLMBackendManager
+	backendName    string
+	manager        *LLMBackendManager
+	maxConcurrency int
 
 	mu          sync.Mutex
 	cond        *sync.Cond
@@ -47,15 +50,22 @@ type backendExecutor struct {
 	closed      bool
 }
 
-func newBackendExecutor(backendName string, manager *LLMBackendManager) *backendExecutor {
+func newBackendExecutor(backendName string, manager *LLMBackendManager, maxConcurrency int) *backendExecutor {
+	if maxConcurrency < 1 {
+		zap.L().Warn("max concurrency is less than 1, setting to 1", zap.String("backend", backendName), zap.Int("max_concurrency", maxConcurrency))
+		maxConcurrency = 1
+	}
 	exec := &backendExecutor{
-		backendName: backendName,
-		manager:     manager,
-		capacity:    defaultBackendQueueCapacity,
-		stageQueues: make(map[string][]*scheduledRequest),
+		backendName:    backendName,
+		manager:        manager,
+		maxConcurrency: maxConcurrency,
+		capacity:       defaultBackendQueueCapacity,
+		stageQueues:    make(map[string][]*scheduledRequest),
 	}
 	exec.cond = sync.NewCond(&exec.mu)
-	go exec.worker()
+	for range maxConcurrency {
+		go exec.worker()
+	}
 	return exec
 }
 
