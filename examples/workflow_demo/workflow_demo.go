@@ -120,7 +120,10 @@ func readPolicyYAMLTool() (*orla.Tool, error) {
 		},
 		nil,
 		orla.ToolRunnerFromSchema(func(_ context.Context, input orla.ToolSchema) (orla.ToolSchema, error) {
-			category, _ := input["category"].(string)
+			category, ok := input["category"].(string)
+			if !ok {
+				return nil, fmt.Errorf("missing or invalid 'category' argument")
+			}
 			policies := map[string]string{
 				"billing": `policy:
   billing:
@@ -200,8 +203,14 @@ func sendEmailTool() (*orla.Tool, error) {
 		},
 		nil,
 		orla.ToolRunnerFromSchema(func(_ context.Context, input orla.ToolSchema) (orla.ToolSchema, error) {
-			to, _ := input["to"].(string)
-			subject, _ := input["subject"].(string)
+			to, ok := input["to"].(string)
+			if !ok {
+				return nil, fmt.Errorf("missing or invalid 'to' argument")
+			}
+			subject, ok := input["subject"].(string)
+			if !ok {
+				return nil, fmt.Errorf("missing or invalid 'subject' argument")
+			}
 			log.Printf("[send_email] To: %s | Subject: %s", to, subject)
 			return orla.ToolSchema{
 				"status":     "sent",
@@ -217,7 +226,7 @@ func readTeamDescriptionsTool() (*orla.Tool, error) {
 		"read_team_descriptions",
 		"Read descriptions of internal support teams to determine the best routing destination.",
 		orla.ToolSchema{
-			"type": "object",
+			"type":       "object",
 			"properties": map[string]any{},
 		},
 		nil,
@@ -280,8 +289,14 @@ func sendTicketTool() (*orla.Tool, error) {
 		},
 		nil,
 		orla.ToolRunnerFromSchema(func(_ context.Context, input orla.ToolSchema) (orla.ToolSchema, error) {
-			team, _ := input["team"].(string)
-			priority, _ := input["priority"].(string)
+			team, ok := input["team"].(string)
+			if !ok {
+				return nil, fmt.Errorf("missing or invalid 'team' argument")
+			}
+			priority, ok := input["priority"].(string)
+			if !ok {
+				return nil, fmt.Errorf("missing or invalid 'priority' argument")
+			}
 			log.Printf("[send_ticket] Team: %s | Priority: %s", team, priority)
 			return orla.ToolSchema{
 				"ticket_id": "TKT-" + team + "-42",
@@ -428,7 +443,9 @@ func Run(ctx context.Context, ticket string) error {
 		var classifyData struct {
 			Category string `json:"category"`
 		}
-		_ = json.Unmarshal([]byte(classification.Response.Content), &classifyData)
+		if err := json.Unmarshal([]byte(classification.Response.Content), &classifyData); err != nil {
+			log.Printf("warning: failed to parse classify output for priority hint: %v", err)
+		}
 		priority := 5
 		if classifyData.Category == "billing" || classifyData.Category == "technical" {
 			priority = 8
