@@ -1,4 +1,4 @@
-// Package memorymanagerdemo demonstrates the Memory Manager with a two-agent workflow.
+// Package memorymanagerdemo demonstrates the Memory Manager with a multi-stage workflow.
 //
 // Uses SGLang by default so the Memory Manager can perform a hard flush via
 // POST /flush_cache when the workflow completes. The workflow uses
@@ -7,7 +7,8 @@
 // Run with: go run ./examples/memory_manager_demo/cmd/memory_manager_demo
 //
 // Prerequisites: Orla + SGLang (workflow-demo stack):
-//   docker compose -f deploy/docker-compose.workflow-demo.yaml up -d
+//
+//	docker compose -f deploy/docker-compose.workflow-demo.yaml up -d
 package memorymanagerdemo
 
 import (
@@ -51,15 +52,15 @@ func Run(ctx context.Context) error {
 		sglangURL := envOr("SGLANG_URL", defaultSGLangURL)
 		backend = orla.NewSGLangBackend(model, sglangURL)
 	}
-	backend.SetMaxConcurrency(1) // safe for SGLang global flush
+	backend.SetMaxConcurrency(1)
 
 	if err := client.RegisterBackend(ctx, backend); err != nil {
 		return fmt.Errorf("register backend: %w", err)
 	}
 
-	// --- Triage agent ---
-	triage := orla.NewAgent(client)
-	triage.Name = "triage"
+	// --- Workflow with flush-at-boundary policy ---
+	wf := orla.NewWorkflow(client)
+	wf.SetMemoryPolicy(orla.NewFlushAtBoundaryPolicy())
 
 	classify := orla.NewStage("classify", backend)
 	classify.SetMaxTokens(128)
@@ -75,63 +76,39 @@ func Run(ctx context.Context) error {
 		return fmt.Sprintf("Given this classification, assign severity (low/medium/high) and a one-sentence priority reason:\n\n%s", cr.Response.Content), nil
 	})
 
-	if err := triage.AddStage(classify); err != nil {
-		return err
-	}
-	if err := triage.AddStage(prioritize); err != nil {
-		return err
-	}
-	if err := triage.AddDependency(prioritize.ID, classify.ID); err != nil {
-		return err
-	}
-
-	// --- Resolver agent ---
-	resolver := orla.NewAgent(client)
-	resolver.Name = "resolver"
-
 	draft := orla.NewStage("draft", backend)
 	draft.SetMaxTokens(256)
-	draft.Prompt = "Draft a brief, professional customer response based on the triage output above. Address the issue and suggest next steps."
-
-	if err := resolver.AddStage(draft); err != nil {
-		return err
-	}
-
-	// --- Workflow with flush-at-boundary policy ---
-	// FlushAtBoundaryPolicy flushes at workflow completion (and on backend switch).
-	// With SGLang, this triggers a hard flush via POST /flush_cache.
-	wf := orla.NewWorkflow()
-	wf.SetMemoryPolicy(orla.NewFlushAtBoundaryPolicy())
-	if err := wf.AddAgent(triage); err != nil {
-		return err
-	}
-	if err := wf.AddAgent(resolver); err != nil {
-		return err
-	}
-	if err := wf.AddDependency("resolver", "triage"); err != nil {
-		return err
-	}
-
-	wf.SetContextPassingFn(func(upstreamResults map[string]*orla.AgentResult, downstream *orla.Agent) error {
-		triageResult, ok := upstreamResults["triage"]
-		if !ok {
-			return nil
-		}
+	draft.SetPromptBuilder(func(results map[string]*orla.StageResult) (string, error) {
 		var triageOutput string
-		for _, sr := range triageResult.StageResults {
-			if sr.Response != nil {
-				triageOutput += sr.Response.Content + "\n"
-			}
+		if cr, ok := results[classify.ID]; ok && cr.Response != nil {
+			triageOutput += cr.Response.Content + "\n"
 		}
-		for _, s := range downstream.Stages() {
-			if s.Name == "draft" {
-				s.Prompt = fmt.Sprintf("Draft a brief, professional customer response based on this triage analysis:\n\n%s\n\nOriginal ticket: %s", triageOutput, sampleTicket)
-			}
+		if pr, ok := results[prioritize.ID]; ok && pr.Response != nil {
+			triageOutput += pr.Response.Content + "\n"
 		}
-		return nil
+		return fmt.Sprintf("Draft a brief, professional customer response based on this triage analysis:\n\n%s\n\nOriginal ticket: %s", triageOutput, sampleTicket), nil
 	})
 
-	log.Println("Executing workflow (triage -> resolver) with FlushAtBoundaryPolicy...")
+	if err := wf.AddStage(classify); err != nil {
+		return err
+	}
+	if err := wf.AddStage(prioritize); err != nil {
+		return err
+	}
+	if err := wf.AddStage(draft); err != nil {
+		return err
+	}
+	if err := wf.AddDependency(prioritize.ID, classify.ID); err != nil {
+		return err
+	}
+	if err := wf.AddDependency(draft.ID, classify.ID); err != nil {
+		return err
+	}
+	if err := wf.AddDependency(draft.ID, prioritize.ID); err != nil {
+		return err
+	}
+
+	log.Println("Executing workflow (classify -> prioritize -> draft) with FlushAtBoundaryPolicy...")
 	log.Println("On completion, SGLang cache will be flushed via POST /flush_cache")
 	results, err := wf.Execute(ctx)
 	if err != nil {
@@ -139,10 +116,8 @@ func Run(ctx context.Context) error {
 	}
 
 	log.Println("=== Results ===")
-	if r, ok := results["resolver"]; ok {
-		if draftResult, ok := r.StageResults[draft.ID]; ok && draftResult.Response != nil {
-			log.Printf("Draft response:\n%s\n", draftResult.Response.Content)
-		}
+	if draftResult, ok := results[draft.ID]; ok && draftResult.Response != nil {
+		log.Printf("Draft response:\n%s\n", draftResult.Response.Content)
 	}
 
 	return nil

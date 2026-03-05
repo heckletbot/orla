@@ -24,7 +24,7 @@ type CacheEvent struct {
 	NextStageModel   string
 	DeltaTokens      int
 	TotalTokens      int
-	TransitionType   string // "stage", "agent", "workflow_complete"
+	TransitionType   string // "stage", "workflow_complete"
 }
 
 // MemoryPolicy determines cache actions at workflow level. Developers can

@@ -10,16 +10,14 @@ type TransitionType string
 const (
 	TransitionStageStart       TransitionType = "stage_start"
 	TransitionStageComplete    TransitionType = "stage_complete"
-	TransitionAgentComplete    TransitionType = "agent_complete"
 	TransitionWorkflowComplete TransitionType = "workflow_complete"
 )
 
 // StageTransition is a signal from the Workflow Executor to the Memory Manager
 // describing a lifecycle event in the workflow DAG.
 type StageTransition struct {
-	WorkflowID     string
-	AgentName      string
-	StageID        string
+	WorkflowID string
+	StageID    string
 	Backend        string
 	Model          string
 	TransitionType TransitionType

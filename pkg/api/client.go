@@ -50,7 +50,7 @@ func (c *OrlaClient) Health(ctx context.Context) error {
 }
 
 // RegisterBackend registers an LLM backend with the daemon. Call this before using the backend in Execute.
-// Pass the same req (or the *LLMBackend) to NewAgent after a successful registration.
+// Pass the same req (or the *LLMBackend) to NewWorkflow/NewStage after a successful registration.
 func (c *OrlaClient) RegisterBackend(ctx context.Context, req *RegisterBackendRequest) error {
 	url := fmt.Sprintf("%s/api/v1/backends", c.baseURL)
 	body, err := json.Marshal(req)

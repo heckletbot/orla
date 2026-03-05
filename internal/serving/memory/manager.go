@@ -120,7 +120,7 @@ func (m *DefaultManager) OnTransition(ctx context.Context, signal StageTransitio
 	switch signal.TransitionType {
 	case TransitionStageStart:
 		m.tracker.OnStageStart(signal)
-	case TransitionStageComplete, TransitionAgentComplete:
+	case TransitionStageComplete:
 		m.tracker.OnStageComplete(signal)
 	case TransitionWorkflowComplete:
 		m.tracker.OnStageComplete(signal)

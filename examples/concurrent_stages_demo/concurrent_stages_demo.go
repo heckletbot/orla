@@ -51,8 +51,7 @@ func Run(ctx context.Context) error {
 	}
 	log.Println("Backend registered with max concurrency 4")
 
-	agent := orla.NewAgent(client)
-	agent.Name = "parallel_demo"
+	wf := orla.NewWorkflow(client)
 
 	stageA := orla.NewStage("summarize", backend)
 	stageA.SetMaxTokens(256)
@@ -62,18 +61,17 @@ func Run(ctx context.Context) error {
 	stageB.SetMaxTokens(256)
 	stageB.Prompt = fmt.Sprintf("Extract all named entities (companies, regions, metrics) from this report. List them one per line:\n\n%s", sampleReport)
 
-	if err := agent.AddStage(stageA); err != nil {
+	if err := wf.AddStage(stageA); err != nil {
 		return err
 	}
-	if err := agent.AddStage(stageB); err != nil {
+	if err := wf.AddStage(stageB); err != nil {
 		return err
 	}
-	// No dependency between stageA and stageB -- they run concurrently.
 
 	log.Println("Executing parallel stages (summarize + extract_entities)...")
-	results, err := agent.ExecuteDAG(ctx)
+	results, err := wf.Execute(ctx)
 	if err != nil {
-		return fmt.Errorf("execute DAG: %w", err)
+		return fmt.Errorf("execute workflow: %w", err)
 	}
 
 	log.Println("=== Results ===")

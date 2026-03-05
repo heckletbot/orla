@@ -15,9 +15,8 @@ const (
 
 // StageState records per-stage metadata needed for cache decisions.
 type StageState struct {
-	StageID   string
-	AgentName string
-	Backend   string
+	StageID string
+	Backend string
 	Model     string
 	Tokens    int
 	Status    StageStatus
@@ -123,9 +122,8 @@ func (t *Tracker) OnStageStart(signal StageTransition) {
 	}
 	now := time.Now()
 	wf.ActiveStages[signal.StageID] = &StageState{
-		StageID:   signal.StageID,
-		AgentName: signal.AgentName,
-		Backend:   signal.Backend,
+		StageID: signal.StageID,
+		Backend: signal.Backend,
 		Model:     signal.Model,
 		Tokens:    signal.ContextTokens,
 		Status:    StageStatusActive,

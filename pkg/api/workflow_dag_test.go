@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAgent_ExecuteDAG_SingleShotLinear(t *testing.T) {
+func TestWorkflow_ExecuteDAG_SingleShotLinear(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req ExecuteRequest
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
@@ -25,28 +25,27 @@ func TestAgent_ExecuteDAG_SingleShotLinear(t *testing.T) {
 	client := NewOrlaClient(server.URL)
 	backend := &LLMBackend{Name: "b", Endpoint: server.URL, Type: "openai", ModelID: "openai:test"}
 
-	agent := NewAgent(client)
-	agent.Name = "test"
+	wf := NewWorkflow(client)
 
 	s1 := NewStage("step1", backend)
 	s1.Prompt = "first"
-	require.NoError(t, agent.AddStage(s1))
+	require.NoError(t, wf.AddStage(s1))
 
 	s2 := NewStage("step2", backend)
 	s2.PromptBuilder = func(results map[string]*StageResult) (string, error) {
 		return results[s1.ID].Response.Content + "+second", nil
 	}
-	require.NoError(t, agent.AddStage(s2))
-	require.NoError(t, agent.AddDependency(s2.ID, s1.ID))
+	require.NoError(t, wf.AddStage(s2))
+	require.NoError(t, wf.AddDependency(s2.ID, s1.ID))
 
-	results, err := agent.ExecuteDAG(context.Background())
+	results, err := wf.Execute(context.Background())
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 	assert.Equal(t, "first", results[s1.ID].Response.Content)
 	assert.Equal(t, "first+second", results[s2.ID].Response.Content)
 }
 
-func TestAgent_ExecuteDAG_FanOut(t *testing.T) {
+func TestWorkflow_ExecuteDAG_FanOut(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req ExecuteRequest
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
@@ -60,24 +59,23 @@ func TestAgent_ExecuteDAG_FanOut(t *testing.T) {
 	client := NewOrlaClient(server.URL)
 	backend := &LLMBackend{Name: "b", Endpoint: server.URL, Type: "openai", ModelID: "openai:test"}
 
-	agent := NewAgent(client)
-	agent.Name = "fanout"
+	wf := NewWorkflow(client)
 
 	root := NewStage("root", backend)
 	root.Prompt = "root"
-	require.NoError(t, agent.AddStage(root))
+	require.NoError(t, wf.AddStage(root))
 
 	branchA := NewStage("branchA", backend)
 	branchA.Prompt = "A"
-	require.NoError(t, agent.AddStage(branchA))
-	require.NoError(t, agent.AddDependency(branchA.ID, root.ID))
+	require.NoError(t, wf.AddStage(branchA))
+	require.NoError(t, wf.AddDependency(branchA.ID, root.ID))
 
 	branchB := NewStage("branchB", backend)
 	branchB.Prompt = "B"
-	require.NoError(t, agent.AddStage(branchB))
-	require.NoError(t, agent.AddDependency(branchB.ID, root.ID))
+	require.NoError(t, wf.AddStage(branchB))
+	require.NoError(t, wf.AddDependency(branchB.ID, root.ID))
 
-	results, err := agent.ExecuteDAG(context.Background())
+	results, err := wf.Execute(context.Background())
 	require.NoError(t, err)
 	require.Len(t, results, 3)
 	assert.Equal(t, "root", results[root.ID].Response.Content)
@@ -85,18 +83,19 @@ func TestAgent_ExecuteDAG_FanOut(t *testing.T) {
 	assert.Equal(t, "B", results[branchB.ID].Response.Content)
 }
 
-func TestAgent_ExecuteDAG_NoStagesReturnsError(t *testing.T) {
-	agent := NewAgent(NewOrlaClient("http://x"))
-	agent.Name = "empty"
-	_, err := agent.ExecuteDAG(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no stages")
+func TestWorkflow_ExecuteDAG_NoStagesReturnsEmpty(t *testing.T) {
+	wf := NewWorkflow(NewOrlaClient("http://x"))
+	results, err := wf.Execute(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, results)
 }
 
-func TestAgent_ExecuteDAG_AgentLoopMode(t *testing.T) {
-	callCount := 0
+func TestWorkflow_ExecuteDAG_AgentLoopMode(t *testing.T) {
+	executeCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
+		if r.URL.Path == "/api/v1/execute" {
+			executeCount++
+		}
 		encodeExecuteResponse(w, ExecuteResponse{
 			Success:  true,
 			Response: &InferenceResponse{Content: "done"},
@@ -107,19 +106,18 @@ func TestAgent_ExecuteDAG_AgentLoopMode(t *testing.T) {
 	client := NewOrlaClient(server.URL)
 	backend := &LLMBackend{Name: "b", Endpoint: server.URL, Type: "openai", ModelID: "openai:test"}
 
-	agent := NewAgent(client)
-	agent.Name = "agent-loop"
+	wf := NewWorkflow(client)
 
 	s := NewStage("loop", backend)
 	s.Prompt = "do something"
 	s.ExecutionMode = ExecutionModeAgentLoop
 	s.MaxTurns = 3
-	require.NoError(t, agent.AddStage(s))
+	require.NoError(t, wf.AddStage(s))
 
-	results, err := agent.ExecuteDAG(context.Background())
+	results, err := wf.Execute(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, results[s.ID])
 	assert.Equal(t, "done", results[s.ID].Response.Content)
 	assert.True(t, len(results[s.ID].Messages) > 0)
-	assert.Equal(t, 1, callCount)
+	assert.Equal(t, 1, executeCount)
 }

@@ -24,7 +24,7 @@ func TestTracker_StageLifecycle(t *testing.T) {
 	tr.RegisterWorkflow("wf1")
 
 	tr.OnStageStart(StageTransition{
-		WorkflowID: "wf1", StageID: "s1", AgentName: "a1",
+		WorkflowID: "wf1", StageID: "s1",
 		Backend: "b1", Model: "m1", ContextTokens: 100,
 		TransitionType: TransitionStageStart,
 	})
@@ -35,7 +35,7 @@ func TestTracker_StageLifecycle(t *testing.T) {
 	assert.NotContains(t, wf.CompletedStages, "s1")
 
 	tr.OnStageComplete(StageTransition{
-		WorkflowID: "wf1", StageID: "s1", AgentName: "a1",
+		WorkflowID: "wf1", StageID: "s1",
 		Backend: "b1", Model: "m1", ContextTokens: 150,
 		TransitionType: TransitionStageComplete,
 	})

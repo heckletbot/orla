@@ -41,7 +41,7 @@ type Stage struct {
 	Name string
 
 	// Client is required for execution methods (Execute, ExecuteStream, etc.).
-	// Set automatically when the stage is added to an Agent.
+	// Set automatically when the stage is added to a Workflow.
 	Client  *OrlaClient
 	Backend *LLMBackend
 
@@ -66,7 +66,7 @@ type Stage struct {
 	CachePolicy string      // "preserve", "flush", or "" (auto/default)
 	CacheHnts   *CacheHints // per-stage cache hint overrides
 
-	workflowID string // set internally by Agent/Workflow, not user-facing
+	workflowID string // set internally by Workflow, not user-facing
 }
 
 func randomStageID() string {
@@ -139,7 +139,7 @@ func (s *Stage) buildRequestWithMessages(messages []Message) (*ExecuteRequest, e
 	return r, nil
 }
 
-// setWorkflowID is called by the Agent to propagate workflow context into requests.
+// setWorkflowID is called by the Workflow to propagate workflow context into requests.
 func (s *Stage) setWorkflowID(wfID string) { s.workflowID = wfID }
 
 func (s *Stage) applyInferenceOptions(r *ExecuteRequest) {

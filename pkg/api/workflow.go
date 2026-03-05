@@ -10,36 +10,24 @@ import (
 	"go.uber.org/zap"
 )
 
-// AgentResult wraps the output of an agent's DAG execution.
-type AgentResult struct {
-	StageResults map[string]*StageResult
-}
-
-// ContextPassingFn customizes how one agent's results feed into the next agent's stages.
-// It is called before a dependent agent starts, allowing mutation of that agent's stage prompts.
-type ContextPassingFn func(upstreamResults map[string]*AgentResult, downstream *Agent) error
-
-// Workflow composes multiple Agents with inter-agent dependencies.
-// Each agent is an independent DAG of stages. Agents with no inter-dependencies
-// run concurrently; the workflow-level DAG controls ordering between agents.
+// Workflow is a DAG of Stages with dependency-aware scheduling.
+// Independent stages execute concurrently; dependent stages wait for
+// their upstream stages to complete. Use AddStage and AddDependency
+// to build the DAG, then Execute to run it.
 type Workflow struct {
-	agents       map[string]*Agent
-	dependencies map[string][]string // agentName -> depends on []agentName
-	contextFn    ContextPassingFn
+	client       *OrlaClient
+	stages       map[string]*Stage
+	dependencies map[string][]string // stageID -> depends on []stageID
 	memoryPolicy MemoryPolicy
 }
 
-// NewWorkflow creates an empty workflow.
-func NewWorkflow() *Workflow {
+// NewWorkflow creates an empty workflow bound to the given client.
+func NewWorkflow(client *OrlaClient) *Workflow {
 	return &Workflow{
-		agents:       make(map[string]*Agent),
+		client:       client,
+		stages:       make(map[string]*Stage),
 		dependencies: make(map[string][]string),
 	}
-}
-
-// SetContextPassingFn sets the function called before each dependent agent starts.
-func (w *Workflow) SetContextPassingFn(fn ContextPassingFn) {
-	w.contextFn = fn
 }
 
 // SetMemoryPolicy sets the workflow-level MemoryPolicy used by the Memory Manager
@@ -57,141 +45,133 @@ func (w *Workflow) MemoryPolicyOrDefault() MemoryPolicy {
 	return NewDefaultMemoryPolicy()
 }
 
-// AddAgent adds an agent to the workflow.
-func (w *Workflow) AddAgent(agent *Agent) error {
-	if agent == nil {
-		return fmt.Errorf("agent cannot be nil")
+// AddStage registers a stage in the workflow's DAG. Sets stage.Client automatically.
+func (w *Workflow) AddStage(s *Stage) error {
+	if s == nil {
+		return fmt.Errorf("stage cannot be nil")
 	}
-	if agent.Name == "" {
-		return fmt.Errorf("agent name is required")
+	if s.ID == "" {
+		return fmt.Errorf("stage id is required")
 	}
-	if _, exists := w.agents[agent.Name]; exists {
-		return fmt.Errorf("agent %q already exists", agent.Name)
+	if _, exists := w.stages[s.ID]; exists {
+		return fmt.Errorf("stage %q already exists", s.ID)
 	}
-	w.agents[agent.Name] = agent
+	s.Client = w.client
+	w.stages[s.ID] = s
 	return nil
 }
 
-// AddDependency declares that agentName depends on dependsOnAgentName.
-func (w *Workflow) AddDependency(agentName, dependsOnAgentName string) error {
-	if _, ok := w.agents[agentName]; !ok {
-		return fmt.Errorf("agent %q not found", agentName)
+// AddDependency declares that stageID depends on dependsOnStageID
+// (dependsOnStageID must finish before stageID starts).
+func (w *Workflow) AddDependency(stageID, dependsOnStageID string) error {
+	if _, ok := w.stages[stageID]; !ok {
+		return fmt.Errorf("stage %q not found", stageID)
 	}
-	if _, ok := w.agents[dependsOnAgentName]; !ok {
-		return fmt.Errorf("dependency agent %q not found", dependsOnAgentName)
+	if _, ok := w.stages[dependsOnStageID]; !ok {
+		return fmt.Errorf("dependency stage %q not found", dependsOnStageID)
 	}
-	w.dependencies[agentName] = append(w.dependencies[agentName], dependsOnAgentName)
+	w.dependencies[stageID] = append(w.dependencies[stageID], dependsOnStageID)
 	return nil
+}
+
+// Stages returns all DAG stages keyed by ID.
+func (w *Workflow) Stages() map[string]*Stage {
+	out := make(map[string]*Stage, len(w.stages))
+	maps.Copy(out, w.stages)
+	return out
 }
 
 // notifyWorkflowComplete sends a best-effort notification to the server so the
 // Memory Manager can flush caches and clean up workflow tracking.
 func (w *Workflow) notifyWorkflowComplete(ctx context.Context, workflowID string) {
-	var client *OrlaClient
+	if w.client == nil {
+		return
+	}
 	backends := make(map[string]struct{})
-	for _, agent := range w.agents {
-		if agent.Client != nil {
-			client = agent.Client
-		}
-		for _, stage := range agent.stages {
-			if stage.Backend != nil && stage.Backend.Name != "" {
-				backends[stage.Backend.Name] = struct{}{}
-			}
+	for _, stage := range w.stages {
+		if stage.Backend != nil && stage.Backend.Name != "" {
+			backends[stage.Backend.Name] = struct{}{}
 		}
 	}
-	if client == nil || len(backends) == 0 {
+	if len(backends) == 0 {
 		return
 	}
 	backendList := make([]string, 0, len(backends))
 	for b := range backends {
 		backendList = append(backendList, b)
 	}
-	if err := client.WorkflowComplete(ctx, workflowID, backendList); err != nil {
+	if err := w.client.WorkflowComplete(ctx, workflowID, backendList); err != nil {
 		zap.L().Debug("Memory manager: workflow complete notification failed",
 			zap.String("workflow_id", workflowID),
 			zap.Error(err))
 	}
 }
 
-// Agents returns all agents keyed by name.
-func (w *Workflow) Agents() map[string]*Agent {
-	out := make(map[string]*Agent, len(w.agents))
-	maps.Copy(out, w.agents)
-	return out
-}
-
-// Execute runs the workflow DAG: agents execute their internal stage DAGs,
-// respecting inter-agent dependencies. Independent agents run concurrently.
-func (w *Workflow) Execute(ctx context.Context) (map[string]*AgentResult, error) {
-	if len(w.agents) == 0 {
-		return map[string]*AgentResult{}, nil
+// Execute runs the workflow's stage DAG with dependency-aware scheduling.
+// Independent stages execute concurrently; context is passed between stages
+// via PromptBuilder/MessagesBuilder. Returns results keyed by stage ID.
+func (w *Workflow) Execute(ctx context.Context) (map[string]*StageResult, error) {
+	if len(w.stages) == 0 {
+		return map[string]*StageResult{}, nil
 	}
 
 	workflowID := namesgenerator.GetRandomName(0)
-	for _, agent := range w.agents {
-		agent.workflowID = workflowID
+	for _, s := range w.stages {
+		s.setWorkflowID(workflowID)
 	}
 
-	// Validate dependencies
-	for name, deps := range w.dependencies {
-		for _, depName := range deps {
-			if _, ok := w.agents[depName]; !ok {
-				return nil, fmt.Errorf("agent %q depends on unknown agent %q", name, depName)
+	for id, deps := range w.dependencies {
+		for _, depID := range deps {
+			if _, ok := w.stages[depID]; !ok {
+				return nil, fmt.Errorf("stage %q depends on unknown stage %q", id, depID)
 			}
 		}
 	}
 
-	dependents := make(map[string][]string, len(w.agents))
-	remainingDeps := make(map[string]int, len(w.agents))
-	for name := range w.agents {
-		for _, depName := range w.dependencies[name] {
-			dependents[depName] = append(dependents[depName], name)
+	dependents := make(map[string][]string, len(w.stages))
+	remainingDeps := make(map[string]int, len(w.stages))
+	for id := range w.stages {
+		for _, depID := range w.dependencies[id] {
+			dependents[depID] = append(dependents[depID], id)
 		}
-		remainingDeps[name] = len(w.dependencies[name])
+		remainingDeps[id] = len(w.dependencies[id])
 	}
 
-	results := make(map[string]*AgentResult, len(w.agents))
+	results := make(map[string]*StageResult, len(w.stages))
 	var resultsMu sync.RWMutex
 	var remainingMu sync.Mutex
 
-	type agentOutcome struct {
-		name      string
+	type stageOutcome struct {
+		id        string
 		err       error
 		unblocked []string
 	}
 
-	outcomeCh := make(chan agentOutcome, len(w.agents))
-	readyCh := make(chan string, len(w.agents))
+	outcomeCh := make(chan stageOutcome, len(w.stages))
+	readyCh := make(chan string, len(w.stages))
 
-	startAgent := func(agentName string) {
+	startStage := func(stageID string) {
 		go func() {
-			agent := w.agents[agentName]
+			stage := w.stages[stageID]
 
-			if w.contextFn != nil {
-				resultsMu.RLock()
-				snapshot := make(map[string]*AgentResult, len(results))
-				maps.Copy(snapshot, results)
-				resultsMu.RUnlock()
+			resultsMu.RLock()
+			depSnapshot := make(map[string]*StageResult, len(results))
+			maps.Copy(depSnapshot, results)
+			resultsMu.RUnlock()
 
-				if err := w.contextFn(snapshot, agent); err != nil {
-					outcomeCh <- agentOutcome{name: agentName, err: fmt.Errorf("agent %q context passing: %w", agentName, err)}
-					return
-				}
-			}
-
-			stageResults, err := agent.ExecuteDAG(ctx)
+			result, err := w.executeStageInDAG(ctx, stage, depSnapshot)
 			if err != nil {
-				outcomeCh <- agentOutcome{name: agentName, err: fmt.Errorf("agent %q: %w", agentName, err)}
+				outcomeCh <- stageOutcome{id: stageID, err: fmt.Errorf("stage %q: %w", stageID, err)}
 				return
 			}
 
 			resultsMu.Lock()
-			results[agentName] = &AgentResult{StageResults: stageResults}
+			results[stageID] = result
 			resultsMu.Unlock()
 
 			remainingMu.Lock()
 			var unblocked []string
-			for _, dep := range dependents[agentName] {
+			for _, dep := range dependents[stageID] {
 				remainingDeps[dep]--
 				if remainingDeps[dep] == 0 {
 					unblocked = append(unblocked, dep)
@@ -199,14 +179,14 @@ func (w *Workflow) Execute(ctx context.Context) (map[string]*AgentResult, error)
 			}
 			remainingMu.Unlock()
 
-			outcomeCh <- agentOutcome{name: agentName, unblocked: unblocked}
+			outcomeCh <- stageOutcome{id: stageID, unblocked: unblocked}
 		}()
 	}
 
 	remainingMu.Lock()
-	for name, deps := range remainingDeps {
+	for id, deps := range remainingDeps {
 		if deps == 0 {
-			readyCh <- name
+			readyCh <- id
 		}
 	}
 	remainingMu.Unlock()
@@ -216,8 +196,8 @@ func (w *Workflow) Execute(ctx context.Context) (map[string]*AgentResult, error)
 	for {
 		for {
 			select {
-			case agentName := <-readyCh:
-				startAgent(agentName)
+			case stageID := <-readyCh:
+				startStage(stageID)
 				dispatched++
 			default:
 				goto waitOutcome
@@ -225,17 +205,17 @@ func (w *Workflow) Execute(ctx context.Context) (map[string]*AgentResult, error)
 		}
 
 	waitOutcome:
-		if completed == len(w.agents) {
+		if completed == len(w.stages) {
 			break
 		}
 		if dispatched == completed {
 			select {
-			case agentName := <-readyCh:
-				startAgent(agentName)
+			case stageID := <-readyCh:
+				startStage(stageID)
 				dispatched++
 				continue
 			default:
-				return nil, fmt.Errorf("workflow has a cycle; completed %d/%d agents", completed, len(w.agents))
+				return nil, fmt.Errorf("workflow: stage DAG has a cycle; completed %d/%d stages", completed, len(w.stages))
 			}
 		}
 
@@ -253,10 +233,110 @@ func (w *Workflow) Execute(ctx context.Context) (map[string]*AgentResult, error)
 		}
 	}
 
-	if dispatched != len(w.agents) {
-		return nil, fmt.Errorf("workflow has a cycle; dispatched %d/%d agents", dispatched, len(w.agents))
+	if dispatched != len(w.stages) {
+		return nil, fmt.Errorf("workflow: stage DAG has a cycle; dispatched %d/%d stages", dispatched, len(w.stages))
 	}
 
 	w.notifyWorkflowComplete(ctx, workflowID)
 	return results, nil
+}
+
+// --- Stage execution within the DAG ---
+
+const defaultMaxAgentLoopTurns = 100
+
+func (w *Workflow) executeStageInDAG(ctx context.Context, stage *Stage, depResults map[string]*StageResult) (*StageResult, error) {
+	switch stage.ExecutionMode {
+	case ExecutionModeAgentLoop:
+		return w.executeAgentLoopStage(ctx, stage, depResults)
+	default:
+		return w.executeSingleShotStage(ctx, stage, depResults)
+	}
+}
+
+func (w *Workflow) executeSingleShotStage(ctx context.Context, stage *Stage, depResults map[string]*StageResult) (*StageResult, error) {
+	if stage.MessagesBuilder != nil {
+		msgs, err := stage.MessagesBuilder(depResults)
+		if err != nil {
+			return nil, fmt.Errorf("messages builder: %w", err)
+		}
+		resp, err := stage.ExecuteWithMessages(ctx, msgs)
+		if err != nil {
+			return nil, err
+		}
+		return &StageResult{Response: resp, Messages: msgs}, nil
+	}
+
+	prompt := stage.Prompt
+	if stage.PromptBuilder != nil {
+		built, err := stage.PromptBuilder(depResults)
+		if err != nil {
+			return nil, fmt.Errorf("prompt builder: %w", err)
+		}
+		prompt = built
+	}
+	if prompt == "" {
+		return nil, fmt.Errorf("prompt is empty")
+	}
+	resp, err := stage.Execute(ctx, prompt)
+	if err != nil {
+		return nil, err
+	}
+	return &StageResult{Response: resp}, nil
+}
+
+func (w *Workflow) executeAgentLoopStage(ctx context.Context, stage *Stage, depResults map[string]*StageResult) (*StageResult, error) {
+	var messages []Message
+
+	if stage.MessagesBuilder != nil {
+		msgs, err := stage.MessagesBuilder(depResults)
+		if err != nil {
+			return nil, fmt.Errorf("messages builder: %w", err)
+		}
+		messages = msgs
+	} else {
+		prompt := stage.Prompt
+		if stage.PromptBuilder != nil {
+			built, err := stage.PromptBuilder(depResults)
+			if err != nil {
+				return nil, fmt.Errorf("prompt builder: %w", err)
+			}
+			prompt = built
+		}
+		if prompt == "" {
+			return nil, fmt.Errorf("prompt is empty")
+		}
+		messages = []Message{{Role: "user", Content: prompt}}
+	}
+
+	maxTurns := stage.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = defaultMaxAgentLoopTurns
+	}
+
+	var lastResp *InferenceResponse
+	for turn := range maxTurns {
+		_ = turn
+		resp, err := stage.ExecuteWithMessages(ctx, messages)
+		if err != nil {
+			return nil, fmt.Errorf("turn %d: %w", turn+1, err)
+		}
+		lastResp = resp
+
+		messages = append(messages, Message{Role: "assistant", Content: resp.Content})
+
+		if len(resp.ToolCalls) == 0 {
+			break
+		}
+
+		toolMsgs, err := stage.RunToolCallsInResponse(ctx, resp)
+		if err != nil {
+			return nil, fmt.Errorf("turn %d tool calls: %w", turn+1, err)
+		}
+		for _, msg := range toolMsgs {
+			messages = append(messages, *msg)
+		}
+	}
+
+	return &StageResult{Response: lastResp, Messages: messages}, nil
 }

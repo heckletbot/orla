@@ -62,18 +62,6 @@ func (p *FlushAtBoundaryPolicy) Evaluate(signal StageTransition, _ *Tracker) Cac
 			Reason:     "workflow completed",
 		}
 	}
-	if signal.TransitionType == TransitionAgentComplete {
-		switchedBackend := signal.PrevBackend != "" && signal.PrevBackend != signal.Backend
-		switchedModel := signal.PrevModel != "" && signal.PrevModel != signal.Model
-		if switchedBackend || switchedModel {
-			return CacheAction{
-				Type:       CacheActionFlush,
-				WorkflowID: signal.WorkflowID,
-				Backend:    signal.PrevBackend,
-				Reason:     "backend/model switch at agent boundary",
-			}
-		}
-	}
 	if signal.TransitionType == TransitionStageStart && signal.PrevBackend != "" {
 		switchedBackend := signal.PrevBackend != signal.Backend
 		switchedModel := signal.PrevModel != signal.Model

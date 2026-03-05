@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWorkflow_AgentDAG(t *testing.T) {
+func TestWorkflow_StageDAG(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req ExecuteRequest
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
@@ -29,53 +29,69 @@ func TestWorkflow_AgentDAG(t *testing.T) {
 	client := NewOrlaClient(server.URL)
 	backend := &LLMBackend{Name: "b", Endpoint: server.URL, Type: "openai", ModelID: "openai:test"}
 
-	agent1 := NewAgent(client)
-	agent1.Name = "agent1"
 	s1 := NewStage("classify", backend)
 	s1.Prompt = "classify task"
-	require.NoError(t, agent1.AddStage(s1))
 
-	agent2 := NewAgent(client)
-	agent2.Name = "agent2"
 	s2 := NewStage("generate", backend)
 	s2.Prompt = "generate code"
-	require.NoError(t, agent2.AddStage(s2))
 
-	wf := NewWorkflow()
-	require.NoError(t, wf.AddAgent(agent1))
-	require.NoError(t, wf.AddAgent(agent2))
-	require.NoError(t, wf.AddDependency("agent2", "agent1"))
+	wf := NewWorkflow(client)
+	require.NoError(t, wf.AddStage(s1))
+	require.NoError(t, wf.AddStage(s2))
+	require.NoError(t, wf.AddDependency(s2.ID, s1.ID))
 
 	results, err := wf.Execute(context.Background())
 	require.NoError(t, err)
 	require.Len(t, results, 2)
-	assert.NotNil(t, results["agent1"])
-	assert.NotNil(t, results["agent2"])
+	assert.NotNil(t, results[s1.ID])
+	assert.NotNil(t, results[s2.ID])
 }
 
-func TestWorkflow_AgentCycle(t *testing.T) {
+func TestWorkflow_StageCycle(t *testing.T) {
 	client := NewOrlaClient("http://example.com")
 	backend := &LLMBackend{Name: "b", Endpoint: "http://x", Type: "openai", ModelID: "openai:test"}
 
-	a1 := NewAgent(client)
-	a1.Name = "a1"
-	s1 := NewStage("s", backend)
+	s1 := NewStage("s1", backend)
 	s1.Prompt = "p"
-	require.NoError(t, a1.AddStage(s1))
 
-	a2 := NewAgent(client)
-	a2.Name = "a2"
-	s2 := NewStage("s", backend)
+	s2 := NewStage("s2", backend)
 	s2.Prompt = "p"
-	require.NoError(t, a2.AddStage(s2))
 
-	wf := NewWorkflow()
-	require.NoError(t, wf.AddAgent(a1))
-	require.NoError(t, wf.AddAgent(a2))
-	require.NoError(t, wf.AddDependency("a1", "a2"))
-	require.NoError(t, wf.AddDependency("a2", "a1"))
+	wf := NewWorkflow(client)
+	require.NoError(t, wf.AddStage(s1))
+	require.NoError(t, wf.AddStage(s2))
+	require.NoError(t, wf.AddDependency(s1.ID, s2.ID))
+	require.NoError(t, wf.AddDependency(s2.ID, s1.ID))
 
 	_, err := wf.Execute(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cycle")
+}
+
+func TestWorkflow_AddStage_and_AddDependency(t *testing.T) {
+	client := NewOrlaClient("http://localhost:8081")
+	backend := &LLMBackend{Name: "b", Endpoint: "http://vllm:8000/v1", Type: "openai", ModelID: "m"}
+	wf := NewWorkflow(client)
+
+	s1 := NewStage("s1", backend)
+	s2 := NewStage("s2", backend)
+
+	require.NoError(t, wf.AddStage(s1))
+	require.NoError(t, wf.AddStage(s2))
+	require.NoError(t, wf.AddDependency(s2.ID, s1.ID))
+
+	assert.Len(t, wf.Stages(), 2)
+	assert.Same(t, client, s1.Client)
+	assert.Same(t, client, s2.Client)
+}
+
+func TestWorkflow_AddStage_duplicateReturnsError(t *testing.T) {
+	client := NewOrlaClient("http://localhost:8081")
+	backend := &LLMBackend{Name: "b", Endpoint: "http://vllm:8000/v1", Type: "openai", ModelID: "m"}
+	wf := NewWorkflow(client)
+	s := NewStage("s", backend)
+	require.NoError(t, wf.AddStage(s))
+	err := wf.AddStage(s)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already exists")
 }
