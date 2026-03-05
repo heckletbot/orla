@@ -10,7 +10,7 @@
 //	  +-- Stage "policy_check"   (agent-loop: reads policy YAML via tool, returns accept/deny + reasoning)
 //	  |     depends on: classify
 //	  |
-//	  +-- Stage "reply"          (agent-loop: composes and sends customer email via tool, structured confirmation)
+//	  +-- Stage "reply"          (agent-loop: if escalated, sends acknowledgment; if not, resolves and sends resolution email)
 //	  |     depends on: policy_check
 //	  |
 //	  +-- Stage "route_ticket"   (agent-loop: routes to human team if escalation needed, or notifies team of auto-resolution)
@@ -424,6 +424,8 @@ func Run(ctx context.Context, ticket string) error {
 	// Stage 3: reply (agent-loop, tool: send_email, heavy model)
 	//
 	//   Input:  Output(policy_check) + Output(classify) + Email + System Prompt
+	//   If needs_escalation: send a brief acknowledgment that the request is being escalated
+	//   If !needs_escalation: resolve the ticket — confirm action or explain denial
 	//   Flow:   Gen → Tool(send_email) → Gen → Structured Output
 	//   Output: {email_sent, summary}
 	//   Depends on: policy_check
@@ -456,16 +458,31 @@ func Run(ctx context.Context, ticket string) error {
 		}
 
 		var classifyData struct {
-			Category string `json:"category"`
+			Category        string `json:"category"`
+			NeedsEscalation bool   `json:"needs_escalation"`
 		}
 		if err := json.Unmarshal([]byte(classification.Response.Content), &classifyData); err != nil {
-			log.Printf("warning: failed to parse classify output for priority hint: %v", err)
+			log.Printf("warning: failed to parse classify output: %v", err)
 		}
 		priority := 5
 		if classifyData.Category == "billing" || classifyData.Category == "technical" {
 			priority = 8
 		}
 		replyStage.SetSchedulingHints(&orla.SchedulingHints{Priority: &priority})
+
+		if classifyData.NeedsEscalation {
+			return fmt.Sprintf(
+				"You are a customer support agent. The triage system determined this ticket "+
+					"NEEDS HUMAN ESCALATION and it is being routed to the appropriate team.\n\n"+
+					"Compose a brief, professional email to the customer letting them know their "+
+					"request has been received and is being escalated to a specialist team for "+
+					"further review. Do NOT resolve the issue or make promises about the outcome. "+
+					"Just acknowledge receipt and set expectations for follow-up.\n\n"+
+					"Send the email using the send_email tool. "+
+					"Extract the customer's email from the original ticket for the 'to' field.\n\n"+
+					"Policy Decision:\n%s\n\nTicket Classification:\n%s\n\nOriginal Ticket:\n%s",
+				policyResult.Response.Content, classification.Response.Content, ticket), nil
+		}
 
 		return fmt.Sprintf(
 			"You are a customer support agent. Based on the policy decision and ticket "+
