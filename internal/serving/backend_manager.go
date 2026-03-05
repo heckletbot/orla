@@ -52,6 +52,12 @@ func (m *LLMBackendManager) AddLLMBackend(name string, backend *core.LLMBackend,
 		exec.close()
 		delete(m.executors, name)
 	}
+
+	if m.memoryManager != nil && backend.Type == core.LLMInferenceAPITypeSGLang {
+		cc := memory.NewSGLangCacheController(backend.Endpoint)
+		m.memoryManager.RegisterCacheController(name, cc)
+		zap.L().Debug("Registered SGLang cache controller for backend", zap.String("backend", name))
+	}
 }
 
 // GetModelProvider returns a cached provider for an LLM backend, creating it if necessary
