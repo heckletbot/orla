@@ -205,6 +205,14 @@ func TestGetOpenAICompatibleEndpoint_Validation(t *testing.T) {
 			Type:     core.LLMInferenceAPITypeOllama,
 		},
 	)
+	require.NoError(t, err)
+
+	_, _, err = getOpenAICompatibleEndpoint(
+		&core.LLMBackend{
+			Endpoint: "http://example",
+			Type:     "unsupported_backend",
+		},
+	)
 	require.Error(t, err)
 }
 
