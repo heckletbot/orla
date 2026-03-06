@@ -34,6 +34,9 @@ type Message struct {
 	ToolName string `json:"tool_name,omitempty"`
 	// ToolCallID is used by the OpenAI API and vLLM
 	ToolCallID string `json:"tool_call_id,omitempty"`
+	// ToolCalls carries the tool calls from an assistant message so they can be
+	// replayed in the conversation history on the next turn.
+	ToolCalls []ToolCallWithID `json:"tool_calls,omitempty"`
 }
 
 // ToolCallWithID represents a tool invocation request from the model.

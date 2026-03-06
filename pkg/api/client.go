@@ -156,10 +156,11 @@ type ExecuteResponse struct {
 
 // Message represents a chat message.
 type Message struct {
-	Role       string `json:"role"`
-	Content    string `json:"content"`
-	ToolCallID string `json:"tool_call_id,omitempty"`
-	ToolName   string `json:"tool_name,omitempty"`
+	Role       string        `json:"role"`
+	Content    string        `json:"content"`
+	ToolCallID string        `json:"tool_call_id,omitempty"`
+	ToolName   string        `json:"tool_name,omitempty"`
+	ToolCalls  []RawToolCall `json:"tool_calls,omitempty"`
 }
 
 // RawToolCall is a raw tool call from the inference response.
@@ -169,6 +170,15 @@ type RawToolCall []byte
 func (r *RawToolCall) UnmarshalJSON(data []byte) error {
 	*r = append((*r)[0:0], data...)
 	return nil
+}
+
+// MarshalJSON returns the raw bytes as-is since they are already valid JSON.
+// Without this, []byte would be base64-encoded by encoding/json.
+func (r RawToolCall) MarshalJSON() ([]byte, error) {
+	if r == nil {
+		return []byte("null"), nil
+	}
+	return r, nil
 }
 
 // InferenceResponse represents the response from inference.

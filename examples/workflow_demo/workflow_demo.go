@@ -39,6 +39,13 @@ const (
 	defaultHeavyURL   = "http://sglang:30000/v1"
 	defaultLightModel = "Qwen/Qwen3-4B-Instruct-2507"
 	defaultHeavyModel = "Qwen/Qwen3-8B"
+
+	defaultOllamaURL        = "http://ollama:11434"
+	defaultOllamaLightModel = "qwen3:0.6b"
+	defaultOllamaHeavyModel = "qwen3:1.7b"
+
+	defaultVLLMLightURL = "http://vllm-light:8000/v1"
+	defaultVLLMHeavyURL = "http://vllm-heavy:8000/v1"
 )
 
 // ---------------------------------------------------------------------------
@@ -334,12 +341,26 @@ func Run(ctx context.Context, ticket string) error {
 	}
 
 	// --- Backends ---
+	//
+	// BACKEND env selects the inference backend: "ollama", "vllm", or "sglang" (default).
+	// Each has sensible Docker-internal defaults so no extra env vars are needed
+	// when running the matching compose file.
 	var lightBackend, heavyBackend *orla.LLMBackend
-	if vllmLight := os.Getenv("VLLM_LIGHT_URL"); vllmLight != "" && os.Getenv("VLLM_HEAVY_URL") != "" {
-		vllmHeavy := os.Getenv("VLLM_HEAVY_URL")
-		lightBackend = orla.NewVLLMBackend(envOr("LIGHT_MODEL", defaultLightModel), vllmLight)
-		heavyBackend = orla.NewVLLMBackend(envOr("HEAVY_MODEL", defaultHeavyModel), vllmHeavy)
-	} else {
+	switch os.Getenv("BACKEND") {
+	case "ollama":
+		ollamaURL := envOr("OLLAMA_URL", defaultOllamaURL)
+		lightBackend = orla.NewOllamaBackend(envOr("LIGHT_MODEL", defaultOllamaLightModel), ollamaURL)
+		heavyBackend = orla.NewOllamaBackend(envOr("HEAVY_MODEL", defaultOllamaHeavyModel), ollamaURL)
+	case "vllm":
+		lightBackend = orla.NewVLLMBackend(
+			envOr("LIGHT_MODEL", defaultLightModel),
+			envOr("VLLM_LIGHT_URL", defaultVLLMLightURL),
+		)
+		heavyBackend = orla.NewVLLMBackend(
+			envOr("HEAVY_MODEL", defaultHeavyModel),
+			envOr("VLLM_HEAVY_URL", defaultVLLMHeavyURL),
+		)
+	default: // sglang
 		lightBackend = orla.NewSGLangBackend(
 			envOr("LIGHT_MODEL", defaultLightModel),
 			envOr("SGLANG_LIGHT_URL", defaultLightURL),

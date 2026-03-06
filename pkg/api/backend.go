@@ -62,11 +62,14 @@ func NewSGLangBackend(modelID string, endpoint string) *LLMBackend {
 	}
 }
 
+// NewOllamaBackend creates a backend that talks to Ollama's OpenAI-compatible
+// API (/v1/chat/completions). The endpoint should be the base Ollama URL
+// (e.g. "http://ollama:11434"); "/v1" is appended automatically.
 func NewOllamaBackend(modelID string, endpoint string) *LLMBackend {
 	return &LLMBackend{
 		Name:     randomBackendName(),
-		Endpoint: endpoint,
+		Endpoint: endpoint + "/v1",
 		Type:     backendTypeOllama,
-		ModelID:  modelIDForBackendType(backendTypeOllama, modelID),
+		ModelID:  modelIDForBackendType(backendTypeOpenAI, modelID),
 	}
 }

@@ -66,8 +66,8 @@ func getOpenAICompatibleEndpoint(llmBackend *core.LLMBackend) (string, string, e
 	}
 
 	switch llmBackend.Type {
-	case core.LLMInferenceAPITypeOpenAI, core.LLMInferenceAPITypeSGLang:
-		// Both expose an OpenAI-compatible /v1/chat/completions endpoint.
+	case core.LLMInferenceAPITypeOpenAI, core.LLMInferenceAPITypeSGLang, core.LLMInferenceAPITypeOllama:
+		// All three expose an OpenAI-compatible /v1/chat/completions endpoint.
 	default:
 		return "", "", fmt.Errorf("[BUG] llm_backend.type must be %s or %s, got '%s': we should not be using this function for non-openai-compatible inference servers", core.LLMInferenceAPITypeOpenAI, core.LLMInferenceAPITypeSGLang, llmBackend.Type)
 	}
@@ -342,9 +342,28 @@ func convertMessageToOpenAI(msg Message) openai.ChatCompletionMessage {
 		if msg.ToolCallID != "" {
 			result.ToolCallID = msg.ToolCallID
 		} else {
-			// Log a warning if ToolCallID is missing - this might cause issues with some servers
 			zap.L().Warn("Tool message missing ToolCallID",
 				zap.String("tool_name", msg.ToolName))
+		}
+	}
+
+	// Carry tool calls on assistant messages so the conversation history is
+	// well-formed for backends that require it (e.g. Ollama).
+	if msg.Role == MessageRoleAssistant && len(msg.ToolCalls) > 0 {
+		for _, tc := range msg.ToolCalls {
+			argsJSON, err := json.Marshal(tc.McpCallToolParams.Arguments)
+			if err != nil {
+				zap.L().Warn("Failed to marshal tool call arguments", zap.Error(err))
+				continue
+			}
+			result.ToolCalls = append(result.ToolCalls, openai.ToolCall{
+				ID:   tc.ID,
+				Type: openai.ToolTypeFunction,
+				Function: openai.FunctionCall{
+					Name:      tc.McpCallToolParams.Name,
+					Arguments: string(argsJSON),
+				},
+			})
 		}
 	}
 

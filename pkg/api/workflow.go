@@ -323,7 +323,7 @@ func (w *Workflow) executeAgentLoopStage(ctx context.Context, stage *Stage, depR
 		}
 		lastResp = resp
 
-		messages = append(messages, Message{Role: "assistant", Content: resp.Content})
+		messages = append(messages, Message{Role: "assistant", Content: resp.Content, ToolCalls: resp.ToolCalls})
 
 		if len(resp.ToolCalls) == 0 {
 			break
