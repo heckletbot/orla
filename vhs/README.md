@@ -24,20 +24,21 @@ Please make sure that the tapes are saved in the `share/` directory in the repos
 
 ## Running the demo tape
 
+Add your user to the docker group on the recording machine (`sudo usermod -aG docker $USER`, then log out and back in) so docker runs without sudo.
+
 Start backends and wait for health checks to pass:
 
 ```bash
-sudo docker compose -f deploy/docker-compose.workflow-demo.yaml up -d
+docker compose -f deploy/docker-compose.workflow-demo.yaml up -d
 ```
 
-Cache sudo and make the runner executable:
+Make the runner executable:
 
 ```bash
-sudo -v
 chmod +x vhs/demo_run.sh
 ```
 
-Do a dry run to measure timing, then adjust `Sleep 180s` in `demo.tape`:
+Do a dry run to measure timing, then adjust `Sleep 40s` in `demo.tape`:
 
 ```bash
 time ./vhs/demo_run.sh

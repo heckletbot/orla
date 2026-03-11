@@ -2,14 +2,13 @@
 #
 # Pre-recording requirements:
 #   1. SGLang backends must be running:
-#      sudo docker compose -f deploy/docker-compose.workflow-demo.yaml up -d
+#      docker compose -f deploy/docker-compose.workflow-demo.yaml up -d
 #   2. Wait for health checks to pass (both SGLang models + Orla server)
-#   3. Run `sudo -v` to cache sudo credentials before starting
-#   4. chmod +x vhs/demo_run.sh
-#   5. Run from the repo root: vhs vhs/demo.tape
+#   3. chmod +x vhs/demo_run.sh
+#   4. Run from the repo root: vhs vhs/demo.tape
 #
-# Timing: The main Sleep (180s) must be longer than the total runtime of both
-# tickets. Do a dry run of vhs/demo_run.sh first and adjust accordingly.
+# Timing: The main Sleep must be longer than the total runtime. Do a dry run
+#         of vhs/demo_run.sh first and adjust accordingly.
 
 Output share/demo.mp4
 
@@ -29,7 +28,7 @@ Set Padding 15
 # Segment 1: Setup — start backends and verify health
 # =========================================================================
 
-Type "sudo docker compose -f deploy/docker-compose.workflow-demo.yaml up -d"
+Type "docker compose -f deploy/docker-compose.workflow-demo.yaml up -d"
 Enter
 Sleep 8s
 
@@ -50,7 +49,7 @@ Enter
 Sleep 1s
 
 # Right pane: tail only new Orla server logs (skip historical output)
-Type 'tmux send-keys -t demo:0.1 "sudo docker compose -f deploy/docker-compose.workflow-demo.yaml logs -f orla 2>&1 | tail -n 0 -f" Enter'
+Type 'tmux send-keys -t demo:0.1 "docker compose -f deploy/docker-compose.workflow-demo.yaml logs -f orla 2>&1 | tail -n 0 -f" Enter'
 Enter
 Sleep 3s
 
