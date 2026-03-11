@@ -20,20 +20,20 @@ sleep 3
 echo -e "${bold}Ticket 1: Billing Dispute${reset}"
 echo ""
 batcat --style=plain --paging=never examples/workflow_demo/tickets/billing.txt
-sleep 4
+sleep 8
 echo ""
 TICKET_PATH=examples/workflow_demo/tickets/billing.txt go run ./examples/workflow_demo/cmd/workflow_demo
-sleep 3
+sleep 6
 
 # --- Ticket 2 ---
 echo ""
 echo -e "${bold}Ticket 2: Account Compromise${reset}"
 echo ""
 batcat --style=plain --paging=never examples/workflow_demo/tickets/account_compromise.txt
-sleep 4
+sleep 8
 echo ""
 TICKET_PATH=examples/workflow_demo/tickets/account_compromise.txt go run ./examples/workflow_demo/cmd/workflow_demo
-sleep 3
+sleep 6
 
 echo ""
 echo -e "${bold}Demo complete.${reset}"
