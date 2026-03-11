@@ -126,6 +126,7 @@ services:
       - ORLA_URL=http://orla:8081
       - FULL_SWE_BENCH=${FULL_SWE_BENCH:-0}
       - MAX_INSTANCES=${MAX_INSTANCES:-}
+      - PREP_PARALLELISM=${PREP_PARALLELISM:-16}
       - WORKDIR_ROOT=/workdir
       - OUTPUT_PATH=/output/predictions.jsonl
       - METRICS_PATH=/output/metrics.json

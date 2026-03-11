@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -138,6 +139,91 @@ func PrepareWorkdir(ctx context.Context, inst SWEBenchLiteInstance) (absWorkdir 
 		return "", err
 	}
 	return absWorkdir, nil
+}
+
+// repoCacheMu protects repo cache operations (clone once per repo).
+var repoCacheMu sync.Mutex
+var repoCacheCloned = make(map[string]bool)
+
+// repoSlug returns a filesystem-safe slug for repo (e.g. "django/django" -> "django__django").
+func repoSlug(repo string) string {
+	return strings.ReplaceAll(repo, "/", "__")
+}
+
+// PrepareWorkdirPooled clones each repo once to a cache, uses git worktree for each instance,
+// and returns the worktree path plus a cleanup func to remove the worktree after reading files.
+// Much faster than PrepareWorkdir when many instances share the same repo.
+func PrepareWorkdirPooled(ctx context.Context, inst SWEBenchLiteInstance) (absWorkdir string, cleanup func(), err error) {
+	reposDir := filepath.Join(WorkdirRoot, "repos")
+	mainClone := filepath.Join(reposDir, repoSlug(inst.Repo))
+	worktreePath := filepath.Join(WorkdirRoot, inst.InstanceID)
+
+	// Clone repo once (with mutex so we don't clone same repo concurrently).
+	repoCacheMu.Lock()
+	if !repoCacheCloned[inst.Repo] {
+		// #nosec G301 -- repos under WorkdirRoot
+		if err := os.MkdirAll(filepath.Dir(mainClone), 0o755); err != nil {
+			repoCacheMu.Unlock()
+			return "", nil, fmt.Errorf("mkdir repos: %w", err)
+		}
+		if _, err := os.Stat(filepath.Join(mainClone, ".git")); err != nil {
+			if os.IsNotExist(err) {
+				log.Printf("  Cloning https://github.com/%s.git (repo cache)", inst.Repo)
+				clone := exec.CommandContext(ctx, "git", "clone", "https://github.com/"+inst.Repo+".git", mainClone)
+				clone.Stdout = os.Stdout
+				clone.Stderr = os.Stderr
+				if err := clone.Run(); err != nil {
+					repoCacheMu.Unlock()
+					return "", nil, fmt.Errorf("git clone %s: %w", inst.Repo, err)
+				}
+			}
+		}
+		repoCacheCloned[inst.Repo] = true
+	}
+	repoCacheMu.Unlock()
+
+	// Fetch base commit and create worktree.
+	fetch := exec.CommandContext(ctx, "git", "fetch", "--quiet", "origin", inst.BaseCommit)
+	fetch.Dir = mainClone
+	fetch.Stdout = os.Stdout
+	fetch.Stderr = os.Stderr
+	if err := fetch.Run(); err != nil {
+		return "", nil, fmt.Errorf("git fetch %s: %w", inst.BaseCommit, err)
+	}
+
+	// #nosec G301 -- workdir under WorkdirRoot
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
+		return "", nil, fmt.Errorf("mkdir worktree parent: %w", err)
+	}
+	// Remove stale worktree dir if it exists (e.g. from previous run).
+	if err := os.RemoveAll(worktreePath); err != nil && !os.IsNotExist(err) {
+		return "", nil, fmt.Errorf("remove stale worktree: %w", err)
+	}
+
+	worktreeAdd := exec.CommandContext(ctx, "git", "worktree", "add", worktreePath, inst.BaseCommit)
+	worktreeAdd.Dir = mainClone
+	worktreeAdd.Stdout = os.Stdout
+	worktreeAdd.Stderr = os.Stderr
+	if err := worktreeAdd.Run(); err != nil {
+		return "", nil, fmt.Errorf("git worktree add %s: %w", inst.InstanceID, err)
+	}
+
+	absWorkdir, err = filepath.Abs(worktreePath)
+	if err != nil {
+		if rmErr := exec.CommandContext(ctx, "git", "worktree", "remove", "--force", worktreePath).Run(); rmErr != nil {
+			log.Printf("warning: worktree remove failed: %v", rmErr)
+		}
+		return "", nil, fmt.Errorf("workdir abs: %w", err)
+	}
+
+	cleanup = func() {
+		rm := exec.CommandContext(context.Background(), "git", "worktree", "remove", "--force", worktreePath)
+		rm.Dir = mainClone
+		if err := rm.Run(); err != nil {
+			log.Printf("warning: worktree remove failed: %v", err)
+		}
+	}
+	return absWorkdir, cleanup, nil
 }
 
 // EnsureRepo clones repo into workdir if needed, then fetches and checks out baseCommit.

@@ -14,10 +14,12 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
 	orla "github.com/dorcha-inc/orla/pkg/api"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/dorcha-inc/orla/examples/swe_bench_lite/shared"
 )
@@ -44,6 +46,15 @@ Choose false (heavy) when the fix likely needs: multiple files, unclear root cau
 
 Apply the criteria above; choose the option that best matches the task. Output prediction: `
 )
+
+func prepParallelismFromEnv() int {
+	if s := os.Getenv("PREP_PARALLELISM"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 16
+}
 
 type instanceJob struct {
 	inst          shared.SWEBenchLiteInstance
@@ -108,43 +119,61 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset, mode string) 
 		heavyStage.SetRequestSchedulingPolicy("priority")
 	}
 
-	// Phase 1: build prompts and (optionally) route
-	log.Printf("Phase 1: building prompts for %d instances (mode=%s)", len(dataset.Instances), mode)
+	// Phase 1: build prompts and (optionally) route, in parallel with repo pooling
+	prepN := prepParallelismFromEnv()
+	log.Printf("Phase 1: building prompts for %d instances (mode=%s, parallelism=%d)", len(dataset.Instances), mode, prepN)
+	sem := make(chan struct{}, prepN)
+	var jobsMu sync.Mutex
 	var jobs []instanceJob
+	g, gctx := errgroup.WithContext(ctx)
 	for i, inst := range dataset.Instances {
 		if i >= shared.MaxIterations {
 			break
 		}
-		absWorkdir, err := shared.PrepareWorkdir(ctx, inst)
-		if err != nil {
-			return fmt.Errorf("prepare workdir %s: %w", inst.InstanceID, err)
-		}
-
-		filePaths := shared.OracleFilePaths(inst.Patch)
-		oracleCtx := shared.GatherOracleContext(absWorkdir, filePaths)
-		prompt := shared.BuildSingleShotPrompt(inst, oracleCtx)
-		log.Printf("  %s: %d oracle files, prompt %d chars", inst.InstanceID, len(filePaths), len(prompt))
-
-		job := instanceJob{
-			inst:      inst,
-			prompt:    prompt,
-			promptLen: len(prompt),
-			stage:     heavyStage,
-			stageName: "heavy",
-		}
-
-		if needsLight {
-			routerPrompt := routerPromptPrefix + inst.ProblemStatement
-			routed, err := mapper.MapStage(ctx, routerPrompt)
-			if err != nil {
-				return fmt.Errorf("instance %s map stage: %w", inst.InstanceID, err)
+		g.Go(func() error {
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-gctx.Done():
+				return gctx.Err()
 			}
-			job.stage = routed
-			job.stageName = routed.Name
-			log.Printf("  %s: routed => %s", inst.InstanceID, job.stageName)
-		}
+			absWorkdir, cleanup, err := shared.PrepareWorkdirPooled(gctx, inst)
+			if err != nil {
+				return fmt.Errorf("prepare workdir %s: %w", inst.InstanceID, err)
+			}
+			filePaths := shared.OracleFilePaths(inst.Patch)
+			oracleCtx := shared.GatherOracleContext(absWorkdir, filePaths)
+			cleanup() // Remove worktree immediately; we have the file contents
+			prompt := shared.BuildSingleShotPrompt(inst, oracleCtx)
+			log.Printf("  %s: %d oracle files, prompt %d chars", inst.InstanceID, len(filePaths), len(prompt))
 
-		jobs = append(jobs, job)
+			job := instanceJob{
+				inst:      inst,
+				prompt:    prompt,
+				promptLen: len(prompt),
+				stage:     heavyStage,
+				stageName: "heavy",
+			}
+
+			if needsLight {
+				routerPrompt := routerPromptPrefix + inst.ProblemStatement
+				routed, err := mapper.MapStage(gctx, routerPrompt)
+				if err != nil {
+					return fmt.Errorf("instance %s map stage: %w", inst.InstanceID, err)
+				}
+				job.stage = routed
+				job.stageName = routed.Name
+				log.Printf("  %s: routed => %s", inst.InstanceID, job.stageName)
+			}
+
+			jobsMu.Lock()
+			jobs = append(jobs, job)
+			jobsMu.Unlock()
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return err
 	}
 
 	// Phase 1b (sjf): assign priority to heavy jobs by prompt length
