@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const defaultBackendQueueCapacity = 1024
+const defaultBackendQueueCapacity = 4096
 
 type scheduledRequest struct {
 	ctx       context.Context

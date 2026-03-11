@@ -29,10 +29,10 @@ const (
 	ModeStageMapping = "stage_mapping"
 	ModeSJF          = "sjf"
 
-	// OrlaMaxConcurrency is higher than vLLM's default max_num_seqs (128) and SGLang's
-	// max_running_requests (dynamically computed from GPU memory, often 4096+), so Orla
-	// keeps dispatching and the backend queues; throughput is limited by the backend.
-	OrlaMaxConcurrency = 256
+	// OrlaMaxConcurrency caps concurrent requests dispatched to the backend.
+	// Matches vLLM's default max_num_seqs (128); going higher just queues
+	// inside the backend without improving throughput.
+	OrlaMaxConcurrency = 128
 
 	heavyModelID    = "Qwen/Qwen3-8B"
 	lightModelID    = "Qwen/Qwen3-4B-Instruct-2507"
@@ -195,8 +195,11 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset, mode string) 
 		}
 	}
 
-	// Phase 2: submit all instances concurrently
-	log.Printf("Phase 2: submitting %d instances concurrently", len(jobs))
+	// Phase 2: submit instances with bounded concurrency to avoid overflowing
+	// Orla's backend queue. submitConcurrency limits in-flight goroutines so that
+	// the queue (capacity 4096) is never saturated even for full SWE-bench (2500+).
+	const submitConcurrency = 512
+	log.Printf("Phase 2: submitting %d instances (max %d in-flight)", len(jobs), submitConcurrency)
 
 	outFile, err := os.OpenFile(shared.OutputPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -216,11 +219,14 @@ func Run(ctx context.Context, dataset *shared.SWEBenchLiteDataset, mode string) 
 		}
 	}()
 
+	submitSem := make(chan struct{}, submitConcurrency)
 	var wg sync.WaitGroup
 	for _, job := range jobs {
 		wg.Add(1)
+		submitSem <- struct{}{}
 		go func(j instanceJob) {
 			defer wg.Done()
+			defer func() { <-submitSem }()
 			submitJob(ctx, j, enc, &encMu, outFile, metrics, mode)
 		}(job)
 	}

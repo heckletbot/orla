@@ -331,9 +331,35 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// Run executes the customer support workflow demo.
+func setSchedulingPolicy(stage *orla.Stage, optsPolicy, defaultPolicy string) {
+	switch optsPolicy {
+	case orla.SchedulingPolicyFCFS:
+		stage.SetSchedulingPolicy(orla.SchedulingPolicyFCFS)
+	case orla.SchedulingPolicyPriority:
+		stage.SetSchedulingPolicy(orla.SchedulingPolicyPriority)
+	default:
+		stage.SetSchedulingPolicy(defaultPolicy)
+	}
+}
+
+// Options configures RunWithOptions for demo variants (e.g. Part 1/2/3).
+type Options struct {
+	// SchedulingPolicy sets all stages to "fcfs" or "priority".
+	SchedulingPolicy string
+	// MemoryPolicy sets the workflow memory policy. If nil, uses default (preserve + flush at boundary).
+	MemoryPolicy orla.MemoryPolicy
+	// RunSecondWorkflow runs a small second workflow after the main one to demonstrate flush at boundary.
+	RunSecondWorkflow bool
+}
+
+// Run executes the customer support workflow demo with default options.
 // ticket is the raw customer support message.
 func Run(ctx context.Context, ticket string) error {
+	return RunWithOptions(ctx, ticket, Options{})
+}
+
+// RunWithOptions executes the customer support workflow with the given options.
+func RunWithOptions(ctx context.Context, ticket string, opts Options) error {
 	orlaURL := envOr("ORLA_URL", defaultOrlaURL)
 	client := orla.NewOrlaClient(orlaURL)
 	if err := client.Health(ctx); err != nil {
@@ -379,6 +405,9 @@ func Run(ctx context.Context, ticket string) error {
 
 	noThinking := map[string]any{"enable_thinking": false}
 	wf := orla.NewWorkflow(client)
+	if opts.MemoryPolicy != nil {
+		wf.SetMemoryPolicy(opts.MemoryPolicy)
+	}
 
 	// -----------------------------------------------------------------------
 	// Stage 1: classify (single-shot, structured output, light model)
@@ -390,7 +419,7 @@ func Run(ctx context.Context, ticket string) error {
 	classifyStage := orla.NewStage("classify", lightBackend)
 	classifyStage.SetMaxTokens(512)
 	classifyStage.SetTemperature(0)
-	classifyStage.SetSchedulingPolicy(orla.SchedulingPolicyFCFS)
+	setSchedulingPolicy(classifyStage, opts.SchedulingPolicy, orla.SchedulingPolicyFCFS)
 	classifyStage.SetResponseFormat(orla.NewStructuredOutputRequest("ticket_classify", classifySchema))
 	classifyStage.Prompt = fmt.Sprintf(
 		"You are a customer support triage system. Classify this support ticket.\n"+
@@ -420,7 +449,7 @@ func Run(ctx context.Context, ticket string) error {
 	policyStage.SetMaxTurns(5)
 	policyStage.SetMaxTokens(1024)
 	policyStage.SetTemperature(0)
-	policyStage.SetSchedulingPolicy(orla.SchedulingPolicyPriority)
+	setSchedulingPolicy(policyStage, opts.SchedulingPolicy, orla.SchedulingPolicyPriority)
 	policyStage.SetChatTemplateKwargs(noThinking)
 	policyStage.SetResponseFormat(orla.NewStructuredOutputRequest("policy_decision", policyDecisionSchema))
 	if err := policyStage.AddTool(policyTool); err != nil {
@@ -462,7 +491,7 @@ func Run(ctx context.Context, ticket string) error {
 	replyStage.SetMaxTurns(5)
 	replyStage.SetMaxTokens(1024)
 	replyStage.SetTemperature(0.3)
-	replyStage.SetSchedulingPolicy(orla.SchedulingPolicyPriority)
+	setSchedulingPolicy(replyStage, opts.SchedulingPolicy, orla.SchedulingPolicyPriority)
 	replyStage.SetChatTemplateKwargs(noThinking)
 	replyStage.SetResponseFormat(orla.NewStructuredOutputRequest("reply_confirmation", replyConfirmationSchema))
 	if err := replyStage.AddTool(emailTool); err != nil {
@@ -545,7 +574,7 @@ func Run(ctx context.Context, ticket string) error {
 	routeStage.SetMaxTurns(10)
 	routeStage.SetMaxTokens(1024)
 	routeStage.SetTemperature(0)
-	routeStage.SetSchedulingPolicy(orla.SchedulingPolicyPriority)
+	setSchedulingPolicy(routeStage, opts.SchedulingPolicy, orla.SchedulingPolicyPriority)
 	routeStage.SetChatTemplateKwargs(noThinking)
 	if err := routeStage.AddTool(emailToolRoute); err != nil {
 		return fmt.Errorf("add send_email tool to route: %w", err)
@@ -680,6 +709,29 @@ func Run(ctx context.Context, ticket string) error {
 				log.Printf("    (tool calls executed: %d)", toolCalls)
 			}
 		}
+	}
+
+	// --- Second workflow (demonstrates flush at boundary) ---
+	if opts.RunSecondWorkflow {
+		log.Println("")
+		log.Println("Running second workflow (Orla flushes cache at workflow boundary)...")
+		wf2 := orla.NewWorkflow(client)
+		if opts.MemoryPolicy != nil {
+			wf2.SetMemoryPolicy(opts.MemoryPolicy)
+		}
+		summarizeStage := orla.NewStage("summarize", heavyBackend)
+		summarizeStage.SetMaxTokens(128)
+		summarizeStage.SetTemperature(0)
+		setSchedulingPolicy(summarizeStage, opts.SchedulingPolicy, orla.SchedulingPolicyPriority)
+		summarizeStage.Prompt = "In one sentence, summarize what a customer support ticket triage workflow does."
+		if err := wf2.AddStage(summarizeStage); err != nil {
+			return err
+		}
+		_, err := wf2.Execute(ctx)
+		if err != nil {
+			return fmt.Errorf("second workflow: %w", err)
+		}
+		log.Println("Second workflow complete.")
 	}
 
 	return nil
