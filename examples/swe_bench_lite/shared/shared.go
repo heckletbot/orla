@@ -199,14 +199,7 @@ func PrepareWorkdirPooled(ctx context.Context, inst SWEBenchLiteInstance) (absWo
 	unlock := repoWorktreeLock(inst.Repo)
 	defer unlock()
 
-	// Prune stale worktree entries from previous runs.
-	prune := exec.CommandContext(ctx, "git", "worktree", "prune")
-	prune.Dir = mainClone
-	if err := prune.Run(); err != nil {
-		log.Printf("warning: git worktree prune failed: %v", err)
-	}
-
-	// Fetch base commit and create worktree.
+	// Fetch base commit.
 	fetch := exec.CommandContext(ctx, "git", "fetch", "--quiet", "origin", inst.BaseCommit)
 	fetch.Dir = mainClone
 	fetch.Stdout = os.Stdout
@@ -222,6 +215,12 @@ func PrepareWorkdirPooled(ctx context.Context, inst SWEBenchLiteInstance) (absWo
 	// Remove stale worktree dir if it exists (e.g. from previous run).
 	if err := os.RemoveAll(worktreePath); err != nil && !os.IsNotExist(err) {
 		return "", nil, fmt.Errorf("remove stale worktree: %w", err)
+	}
+	// Prune removes git's stale worktree entries for dirs we just removed.
+	prune := exec.CommandContext(ctx, "git", "worktree", "prune")
+	prune.Dir = mainClone
+	if err := prune.Run(); err != nil {
+		log.Printf("warning: git worktree prune failed: %v", err)
 	}
 
 	worktreeAdd := exec.CommandContext(ctx, "git", "worktree", "add", worktreePath, inst.BaseCommit)
