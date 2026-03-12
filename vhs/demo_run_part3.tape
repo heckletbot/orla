@@ -1,16 +1,16 @@
-# CAIS 2026 Demo: Orla Customer Support Workflow
+# CAIS 2026 Demo: Orla Part 3 — Priority + Flush at Boundary (Two Workflows)
 #
 # Pre-recording requirements:
 #   1. SGLang backends must be running:
 #      docker compose -f deploy/docker-compose.workflow-demo.yaml up -d
 #   2. Wait for health checks to pass (both SGLang models + Orla server)
-#   3. chmod +x vhs/demo_run.sh
-#   4. Run from the repo root: vhs vhs/demo.tape
+#   3. chmod +x vhs/demo_run_part3.sh
+#   4. Run from the repo root: vhs vhs/demo_run_part3.tape
 #
 # Timing: The main Sleep must be longer than the total runtime. Do a dry run
-#         of vhs/demo_run.sh first and adjust accordingly.
+#         of vhs/demo_run_part3.sh first and adjust accordingly.
 
-Output share/demo.mp4
+Output share/demo_run_part3.mp4
 
 Require tmux
 Require curl
@@ -62,10 +62,9 @@ Enter
 Sleep 2s
 
 # =========================================================================
-# Segment 3: Run both tickets via the demo script
+# Segment 3: Run Part 3 (priority + flush at boundary, two workflows)
 # =========================================================================
 
-Type "./vhs/demo_run.sh"
+Type "./vhs/demo_run_part3.sh"
 Enter
 Sleep 50s
-
