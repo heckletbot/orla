@@ -192,14 +192,15 @@ func (e *backendExecutor) worker() {
 		if req.opts.Stream && streamCh != nil {
 			done := make(chan struct{})
 			proxyCh := make(chan model.StreamEvent, 32)
+			sourceCh := streamCh // capture before reassignment; goroutine closure would see proxyCh otherwise
 			go func() {
 				defer close(proxyCh)
 				defer close(done)
-				for ev := range streamCh {
+				for ev := range sourceCh {
 					select {
 					case proxyCh <- ev:
 					case <-req.ctx.Done():
-						for range streamCh {
+						for range sourceCh {
 						}
 						return
 					}
