@@ -20,7 +20,7 @@ const (
 	ModeFlushPerRequest  = "flush_per_request"
 	ModeFlushPerWorkflow = "flush_per_workflow"
 
-	modelID = "Qwen/Qwen3-8B"
+	defaultModelID = "Qwen/Qwen3-0.6B" // smallest = fastest; override with SGLANG_MODEL
 )
 
 func Run(ctx context.Context, dataset *shared.DAGMathDataset, mode string) error {
@@ -33,7 +33,12 @@ func Run(ctx context.Context, dataset *shared.DAGMathDataset, mode string) error
 	if sglangURL == "" {
 		sglangURL = shared.SGLangURL
 	}
+	modelID := os.Getenv("SGLANG_MODEL")
+	if modelID == "" {
+		modelID = defaultModelID
+	}
 
+	log.Printf("Using model %s (override with SGLANG_MODEL)", modelID)
 	backend := orla.NewSGLangBackend(modelID, sglangURL)
 	backend.SetMaxConcurrency(1)
 	if err := client.RegisterBackend(ctx, backend); err != nil {
