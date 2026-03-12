@@ -113,6 +113,7 @@ func runWorkflow(ctx context.Context, client *orla.OrlaClient, backend *orla.LLM
 		stage.SetMaxTokens(shared.MaxOutputTokens)
 		stage.SetTemperature(0)
 		stage.SetChatTemplateKwargs(map[string]any{"enable_thinking": false})
+		stage.SetStream(true)
 
 		if mode == ModeFlushPerRequest {
 			stage.SetCachePolicy(orla.CachePolicyFlush)

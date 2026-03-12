@@ -260,6 +260,17 @@ func (w *Workflow) executeSingleShotStage(ctx context.Context, stage *Stage, dep
 		if err != nil {
 			return nil, fmt.Errorf("messages builder: %w", err)
 		}
+		if stage.Stream {
+			stream, err := stage.ExecuteStreamWithMessages(ctx, msgs)
+			if err != nil {
+				return nil, err
+			}
+			resp, err := stage.ConsumeStream(ctx, stream, nil)
+			if err != nil {
+				return nil, err
+			}
+			return &StageResult{Response: resp, Messages: msgs}, nil
+		}
 		resp, err := stage.ExecuteWithMessages(ctx, msgs)
 		if err != nil {
 			return nil, err
@@ -277,6 +288,17 @@ func (w *Workflow) executeSingleShotStage(ctx context.Context, stage *Stage, dep
 	}
 	if prompt == "" {
 		return nil, fmt.Errorf("prompt is empty")
+	}
+	if stage.Stream {
+		stream, err := stage.ExecuteStream(ctx, prompt)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := stage.ConsumeStream(ctx, stream, nil)
+		if err != nil {
+			return nil, err
+		}
+		return &StageResult{Response: resp}, nil
 	}
 	resp, err := stage.Execute(ctx, prompt)
 	if err != nil {

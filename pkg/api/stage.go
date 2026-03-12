@@ -66,6 +66,8 @@ type Stage struct {
 	CachePolicy string      // "preserve", "flush", or "" (auto/default)
 	CacheHnts   *CacheHints // per-stage cache hint overrides
 
+	Stream bool // when true, workflow uses streaming execution to capture TTFT/TPOT
+
 	workflowID string // set internally by Workflow, not user-facing
 }
 
@@ -98,6 +100,7 @@ func (s *Stage) SetPromptBuilder(builder StagePromptBuilder)     { s.PromptBuild
 func (s *Stage) SetMessagesBuilder(builder StageMessagesBuilder) { s.MessagesBuilder = builder }
 func (s *Stage) SetCachePolicy(policy string)                    { s.CachePolicy = policy }
 func (s *Stage) SetCacheHints(hints *CacheHints)                 { s.CacheHnts = hints }
+func (s *Stage) SetStream(enabled bool)                          { s.Stream = enabled }
 
 // AddTool adds a tool to this stage. Returns an error if t is nil.
 func (s *Stage) AddTool(t *Tool) error {
