@@ -35,7 +35,7 @@ func Run(ctx context.Context, dataset *shared.DAGMathDataset, mode string) error
 	}
 
 	backend := orla.NewSGLangBackend(modelID, sglangURL)
-	backend.SetMaxConcurrency(128)
+	backend.SetMaxConcurrency(1)
 	if err := client.RegisterBackend(ctx, backend); err != nil {
 		return fmt.Errorf("register backend: %w", err)
 	}
@@ -76,6 +76,10 @@ func Run(ctx context.Context, dataset *shared.DAGMathDataset, mode string) error
 			continue
 		}
 		metrics.AddWorkflow(*wfMetrics)
+		for _, sm := range wfMetrics.Stages {
+			log.Printf("  workflow %d, step %d: duration=%dms prompt_tokens=%d completion_tokens=%d",
+				problem.ProblemID, sm.StepID, sm.DurationMs, sm.PromptTokens, sm.CompletionTokens)
+		}
 		if wfResults != nil {
 			results.AddWorkflow(*wfResults)
 		}
