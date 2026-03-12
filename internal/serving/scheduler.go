@@ -184,10 +184,50 @@ func (e *backendExecutor) worker() {
 			response.Metrics.BackendLatencyMs = dispatchMs
 		}
 
+		// For streaming requests, proxy the channel through a wrapper so we
+		// can block until the stream completes. This enforces maxConcurrency
+		// for streaming: the worker won't dequeue the next request until the
+		// backend finishes generating for the current one.
+		var streamDone <-chan struct{}
+		if req.opts.Stream && streamCh != nil {
+			done := make(chan struct{})
+			proxyCh := make(chan model.StreamEvent, 32)
+			go func() {
+				defer close(proxyCh)
+				defer close(done)
+				for ev := range streamCh {
+					select {
+					case proxyCh <- ev:
+					case <-req.ctx.Done():
+						for range streamCh {
+						}
+						return
+					}
+				}
+			}()
+			streamCh = proxyCh
+			streamDone = done
+		}
+
 		req.resultCh <- scheduledResult{
 			response: response,
 			streamCh: streamCh,
 			err:      nil,
+		}
+
+		if streamDone != nil {
+			<-streamDone
+			if e.memoryManager != nil && req.workflowID != "" {
+				e.memoryManager.ClearInflight(req.backend, requestID)
+				e.memoryManager.OnTransition(req.ctx, memory.StageTransition{
+					TransitionType: memory.TransitionStageComplete,
+					WorkflowID:     req.workflowID,
+					StageID:        req.stageName,
+					Backend:        req.backend,
+					Model:          e.manager.GetModelID(req.backend),
+					CachePolicy:    req.cachePolicy,
+				})
+			}
 		}
 	}
 }
