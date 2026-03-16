@@ -13,7 +13,7 @@ Require vim
 
 Set Theme "3024 Night"
 Set FontSize 22
-Set Width 1200
+Set Width 1400
 Set Height 900
 Set LineHeight 1.3
 Set TypingSpeed 30ms
@@ -25,41 +25,31 @@ Enter
 Show
 Sleep 2s
 
-# Edit line 1: Part 1 -> Part 2
+# Edit line 1: Part 1 -> Part 2 (cc = change line, no Enter after G/cc)
 Type "1G"
-Enter
 Type "cc"
-Enter
 Type "// Part 2: Part 1 + priority scheduling (billing/technical get higher priority)"
-Enter
 Escape
 Sleep 0.5s
 
 # Add SetSchedulingPolicy after replyStage creation (line 9)
 Type "9G"
-Enter
 Type "o"
-Enter
 Type "replyStage.SetSchedulingPolicy(orla.SchedulingPolicyPriority)"
-Enter
 Escape
 Sleep 0.5s
 
-# Edit struct: add Category for priority logic
+# Edit struct: add Category for priority logic (include leading tab for indent)
 Type "15G"
-Enter
 Type "cc"
-Enter
+Tab
 Type 'var c struct { Category string `json:"category"` ; NeedsEscalation bool `json:"needs_escalation"` }'
-Enter
 Escape
 Sleep 0.5s
 
 # Add priority hints before if c.NeedsEscalation (insert above)
 Type "17G"
-Enter
 Type "O"
-Enter
 Tab
 Type "p := 5"
 Enter
@@ -68,7 +58,6 @@ Type 'if c.Category == "billing" || c.Category == "technical" { p = 8 }'
 Enter
 Tab
 Type "replyStage.SetSchedulingHints(&orla.SchedulingHints{Priority: &p})"
-Enter
 Escape
 Sleep 0.5s
 
