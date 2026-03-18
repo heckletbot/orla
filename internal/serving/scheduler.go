@@ -9,6 +9,7 @@ import (
 
 	"github.com/dorcha-inc/orla/internal/model"
 	"github.com/dorcha-inc/orla/internal/serving/memory"
+	"github.com/dorcha-inc/orla/internal/serving/metrics"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.uber.org/zap"
 )
@@ -103,6 +104,7 @@ func (e *backendExecutor) enqueue(req *scheduledRequest) error {
 	}
 	e.stageQueues[stage] = append(e.stageQueues[stage], req)
 	e.queueLen++
+	metrics.QueueDepth.WithLabelValues(e.backendName).Set(float64(e.queueLen))
 	e.cond.Signal()
 	return nil
 }
@@ -121,12 +123,14 @@ func (e *backendExecutor) worker() {
 			return
 		}
 		if req.ctx.Err() != nil {
+			metrics.RequestsTotal.WithLabelValues(req.backend, "error").Inc()
 			req.resultCh <- scheduledResult{err: req.ctx.Err()}
 			continue
 		}
 
 		provider, err := e.manager.GetModelProvider(req.ctx, req.backend)
 		if err != nil {
+			metrics.RequestsTotal.WithLabelValues(req.backend, "error").Inc()
 			req.resultCh <- scheduledResult{err: fmt.Errorf("failed to get provider for server '%s': %w", req.backend, err)}
 			continue
 		}
@@ -154,7 +158,7 @@ func (e *backendExecutor) worker() {
 		}
 
 		dispatchStart := time.Now()
-		response, streamCh, err := provider.Chat(req.ctx, req.messages, req.tools, req.opts)
+		response, streamCh, err := chatWithRetry(req.ctx, provider, req.messages, req.tools, req.opts)
 		dispatchMs := time.Since(dispatchStart).Milliseconds()
 		queueWaitMs := dispatchStart.Sub(req.enqueuedAt).Milliseconds()
 
@@ -171,12 +175,18 @@ func (e *backendExecutor) worker() {
 		}
 
 		if err != nil {
+			metrics.RequestsTotal.WithLabelValues(req.backend, "error").Inc()
+			metrics.BackendLatencySeconds.WithLabelValues(req.backend).Observe(float64(dispatchMs) / 1000)
 			if e.memoryManager != nil && req.workflowID != "" && req.opts.Stream {
 				e.memoryManager.ClearInflight(req.backend, requestID)
 			}
 			req.resultCh <- scheduledResult{err: fmt.Errorf("inference failed on server '%s': %w", req.backend, err)}
 			continue
 		}
+
+		metrics.RequestsTotal.WithLabelValues(req.backend, "success").Inc()
+		metrics.QueueWaitSeconds.WithLabelValues(req.backend).Observe(float64(queueWaitMs) / 1000)
+		metrics.BackendLatencySeconds.WithLabelValues(req.backend).Observe(float64(dispatchMs) / 1000)
 
 		// For non-streaming, set metrics immediately. For streaming, the provider's goroutine
 		// populates response (including Metrics) concurrently. We must not race with it.
@@ -271,6 +281,7 @@ func (e *backendExecutor) dequeue() (*scheduledRequest, int64, bool) {
 		e.stageQueues[stage] = stageQueue
 	}
 	e.queueLen--
+	metrics.QueueDepth.WithLabelValues(e.backendName).Set(float64(e.queueLen))
 	decisionMs := time.Since(decisionStart).Milliseconds()
 	return req, decisionMs, true
 }

@@ -11,8 +11,11 @@ import (
 	"github.com/dorcha-inc/orla/internal/core"
 	"github.com/dorcha-inc/orla/internal/model"
 	"github.com/dorcha-inc/orla/internal/serving"
+	_ "github.com/dorcha-inc/orla/internal/serving/metrics" // register Prometheus metrics
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 )
 
 // SSE event types for execute stream
@@ -46,8 +49,17 @@ type AgenticServer struct {
 	mux        *http.ServeMux
 }
 
-// NewAgenticServer creates a new daemon API server
-func NewAgenticServer(layer *serving.AgenticLayer, listenAddress string) *AgenticServer {
+// ServerOptions configures the API server.
+type ServerOptions struct {
+	// RateLimitRPS limits requests per second for execute and backends. 0 = disabled.
+	RateLimitRPS int
+}
+
+// NewAgenticServer creates a new daemon API server.
+func NewAgenticServer(layer *serving.AgenticLayer, listenAddress string, opts *ServerOptions) *AgenticServer {
+	if opts == nil {
+		opts = &ServerOptions{}
+	}
 	mux := http.NewServeMux()
 	server := &AgenticServer{
 		layer: layer,
@@ -63,7 +75,7 @@ func NewAgenticServer(layer *serving.AgenticLayer, listenAddress string) *Agenti
 		},
 	}
 
-	server.registerRoutes()
+	server.registerRoutes(opts.RateLimitRPS)
 	return server
 }
 
@@ -80,12 +92,34 @@ func recoveryMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func (s *AgenticServer) registerRoutes() {
+func (s *AgenticServer) registerRoutes(rateLimitRPS int) {
 	s.mux.HandleFunc("GET /api/v1/health", s.handleHealth)
-	s.mux.HandleFunc("POST /api/v1/execute", s.handleExecute)
-	s.mux.HandleFunc("POST /api/v1/backends", s.handleRegisterBackend)
+	s.mux.Handle("GET /metrics", promhttp.Handler())
+
+	var executeHandler, backendsHandler http.Handler
+	executeHandler = http.HandlerFunc(s.handleExecute)
+	backendsHandler = http.HandlerFunc(s.handleRegisterBackend)
+	if rateLimitRPS > 0 {
+		limiter := rate.NewLimiter(rate.Limit(rateLimitRPS), rateLimitRPS) // burst = RPS for predictable limiting
+		executeHandler = rateLimitMiddleware(limiter, executeHandler)
+		backendsHandler = rateLimitMiddleware(limiter, backendsHandler)
+	}
+	s.mux.Handle("POST /api/v1/execute", executeHandler)
+	s.mux.Handle("POST /api/v1/backends", backendsHandler)
+
 	s.mux.HandleFunc("GET /api/v1/backends", s.handleListBackends)
 	s.mux.HandleFunc("POST /api/v1/workflow/complete", s.handleWorkflowComplete)
+}
+
+// rateLimitMiddleware returns 429 when the limiter rejects the request.
+func rateLimitMiddleware(limiter *rate.Limiter, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.Allow() {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Start starts the HTTP server

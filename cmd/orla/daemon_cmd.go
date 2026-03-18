@@ -49,7 +49,9 @@ func newServeCmd() *cobra.Command {
 
 			layer := serving.NewAgenticLayer()
 
-			apiServer := servingapi.NewAgenticServer(layer, listenAddress)
+			apiServer := servingapi.NewAgenticServer(layer, listenAddress, &servingapi.ServerOptions{
+				RateLimitRPS: cfg.RateLimitRPS,
+			})
 
 			// Set up signal handling for graceful shutdown
 			ctx, cancel := context.WithCancel(context.Background())

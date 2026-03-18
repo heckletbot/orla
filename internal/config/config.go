@@ -69,6 +69,7 @@ var validLogFormats = map[OrlaLogFormat]struct{}{
 type OrlaConfig struct {
 	// Service only
 	ListenAddress string `yaml:"listen_address,omitempty" mapstructure:"listen_address"` // address to bind (e.g. "localhost:8081", ":8081")
+	RateLimitRPS  int    `yaml:"rate_limit_rps,omitempty" mapstructure:"rate_limit_rps"`   // max requests/sec for execute and backends; 0 = disabled
 	// Common to both service and agent
 	LogFormat OrlaLogFormat `yaml:"log_format,omitempty" mapstructure:"log_format"` // the log format, "pretty" or "json"
 	LogLevel  string        `yaml:"log_level,omitempty" mapstructure:"log_level"`   // the log level, "debug", "info", "warn", "error", "fatal"
@@ -101,6 +102,7 @@ func setupViper(configPath string) error {
 // setViperDefaults sets default values in Viper
 func setViperDefaults() {
 	viper.SetDefault("listen_address", "localhost:8081")
+	viper.SetDefault("rate_limit_rps", 0)
 	viper.SetDefault("log_format", "json")
 	viper.SetDefault("log_level", "info")
 	viper.SetDefault("model", DefaultModel)
