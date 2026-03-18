@@ -1,4 +1,5 @@
 # Ollama variant of the workflow demo stack (laptop-friendly, no GPU required).
+# Uses OpenAI-compatible API at http://ollama:11434/v1.
 # Models are pulled automatically on first start.
 # Run from repo root:
 #   docker compose -f deploy/docker-compose.workflow-demo.ollama.yaml up -d

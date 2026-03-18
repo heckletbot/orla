@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	DefaultModel = "ollama:qwen3:0.6b"
+	DefaultModel = "openai:qwen3:0.6b"
 )
 
 type OrlaLogLevel string
@@ -74,7 +74,7 @@ type OrlaConfig struct {
 	LogLevel  string        `yaml:"log_level,omitempty" mapstructure:"log_level"`   // the log level, "debug", "info", "warn", "error", "fatal"
 	// Agent only (ignored by orla serve)
 	LLMBackend   *core.LLMBackend `yaml:"llm_backend,omitempty" mapstructure:"llm_backend"`     // LLM backend configuration (endpoint, type, api_key)
-	Model        string           `yaml:"model,omitempty" mapstructure:"model"`                 // model identifier (e.g., "ollama:ministral-3:8b", "openai:gpt-4")
+	Model        string           `yaml:"model,omitempty" mapstructure:"model"`                 // model identifier (e.g., "openai:qwen3:0.6b", "openai:gpt-4")
 	Streaming    bool             `yaml:"streaming,omitempty" mapstructure:"streaming"`         // enable streaming responses
 	OutputFormat OrlaOutputFormat `yaml:"output_format,omitempty" mapstructure:"output_format"` // output format: "auto", "rich", or "plain"
 	ShowThinking bool             `yaml:"show_thinking,omitempty" mapstructure:"show_thinking"` // show thinking trace output (for thinking-capable models)
@@ -124,6 +124,14 @@ func LoadConfig(configPath string) (*OrlaConfig, error) {
 	unmarshalErr := viper.Unmarshal(cfg)
 	if unmarshalErr != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", unmarshalErr)
+	}
+
+	// Default LLMBackend for local Ollama when using default model
+	if cfg.LLMBackend == nil && cfg.Model == DefaultModel {
+		cfg.LLMBackend = &core.LLMBackend{
+			Endpoint: "http://localhost:11434/v1",
+			Type:     core.LLMInferenceAPITypeOpenAI,
+		}
 	}
 
 	validateConfigErr := validateConfig(cfg)

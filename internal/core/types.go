@@ -5,10 +5,8 @@ package core
 type LLMInferenceAPIType string
 
 const (
-	// LLMInferenceAPITypeOllama represents the Ollama API (RFC 4)
-	LLMInferenceAPITypeOllama LLMInferenceAPIType = "ollama"
 	// LLMInferenceAPITypeOpenAI represents any inference server that has an
-	// OpenAI-compatible API.
+	// OpenAI-compatible API (including Ollama via /v1/chat/completions).
 	LLMInferenceAPITypeOpenAI LLMInferenceAPIType = "openai"
 	// LLMInferenceAPITypeSGLang represents SGLang, which provides an OpenAI-compatible
 	// API for inference and a separate /flush_cache endpoint for cache control.

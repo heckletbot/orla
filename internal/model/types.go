@@ -136,6 +136,8 @@ type InferenceOptions struct {
 	RequestSchedulingPolicy RequestSchedulingPolicy `json:"request_scheduling_policy,omitempty"`
 	// SchedulingHints are optional policy hints for backend queueing.
 	SchedulingHints *SchedulingHints `json:"scheduling_hints,omitempty"`
+	// ReasoningEffort controls thinking for reasoning-capable models ("high", "medium", "low", "none").
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 // GetSchedulingPolicy returns the configured scheduling policy or the FCFS default.
@@ -148,7 +150,7 @@ func (o InferenceOptions) GetSchedulingPolicy() SchedulingPolicy {
 
 // Provider is the interface that all model providers must implement
 type Provider interface {
-	// Name returns the provider name (e.g., "ollama", "openai", "anthropic")
+	// Name returns the provider name (e.g., "openai", "anthropic")
 	Name() string
 
 	// Chat sends a chat request to the model with the given inference options and returns the response.

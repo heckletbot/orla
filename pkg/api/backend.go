@@ -9,9 +9,8 @@ func randomBackendName() string {
 }
 
 const (
-	backendTypeOpenAI  = "openai"
-	backendTypeOllama  = "ollama"
-	backendTypeSGLang  = "sglang"
+	backendTypeOpenAI = "openai"
+	backendTypeSGLang = "sglang"
 )
 
 func modelIDForBackendType(backendType string, modelID string) string {
@@ -22,7 +21,7 @@ func modelIDForBackendType(backendType string, modelID string) string {
 type RegisterBackendRequest struct {
 	Name           string `json:"name"`                        // backend name (used as Backend in execute requests)
 	Endpoint       string `json:"endpoint"`                    // e.g. "http://localhost:8000/v1"
-	Type           string `json:"type"`                        // "openai", "ollama", or "sglang"
+	Type           string `json:"type"`                        // "openai" or "sglang"
 	ModelID        string `json:"model_id"`                    // e.g. "openai:Qwen/Qwen3-4B-Instruct-2507"
 	APIKeyEnvVar   string `json:"api_key_env_var,omitempty"`   // optional env var for API key (openai-type)
 	MaxConcurrency int    `json:"max_concurrency,omitempty"`   // max concurrent requests dispatched to this backend (default 1)
@@ -69,7 +68,7 @@ func NewOllamaBackend(modelID string, endpoint string) *LLMBackend {
 	return &LLMBackend{
 		Name:     randomBackendName(),
 		Endpoint: endpoint + "/v1",
-		Type:     backendTypeOllama,
+		Type:     backendTypeOpenAI,
 		ModelID:  modelIDForBackendType(backendTypeOpenAI, modelID),
 	}
 }

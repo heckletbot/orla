@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dorcha-inc/orla/internal/config"
+	"github.com/dorcha-inc/orla/internal/core"
 	"github.com/dorcha-inc/orla/internal/model"
 	orlaTesting "github.com/dorcha-inc/orla/internal/testing"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -169,7 +170,8 @@ func TestNewExecutor(t *testing.T) {
 		{
 			name: "valid config",
 			cfg: &config.OrlaConfig{
-				Model: "ollama:llama3",
+				Model:      "openai:llama3",
+				LLMBackend: &core.LLMBackend{Type: core.LLMInferenceAPITypeOpenAI, Endpoint: "http://localhost:11434/v1"},
 			},
 			expectedErr: false,
 		},

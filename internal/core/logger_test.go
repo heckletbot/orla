@@ -12,7 +12,7 @@ import (
 
 // TestInit_PrettyLog tests logger initialization with pretty logging
 func TestInit_PrettyLog(t *testing.T) {
-	err := InitLogger(true)
+	err := InitLogger(true, "")
 	require.NoError(t, err)
 
 	// Verify logger is initialized
@@ -32,7 +32,7 @@ func TestInit_Error(t *testing.T) {
 	// We'll test with valid inputs and verify error handling structure
 
 	// Test that Init succeeds with valid inputs
-	err := InitLogger(false)
+	err := InitLogger(false, "")
 	require.NoError(t, err)
 
 	// The error path (config.Build() failure) is hard to trigger without
@@ -41,7 +41,7 @@ func TestInit_Error(t *testing.T) {
 
 // TestInit_JSONLog tests logger initialization with JSON logging
 func TestInit_JSONLog(t *testing.T) {
-	err := InitLogger(false)
+	err := InitLogger(false, "")
 	require.NoError(t, err)
 
 	// Verify logger is initialized

@@ -28,12 +28,11 @@ func applyVersionDefaults() {
 }
 
 func main() {
-	// Initialize a default logger so zap.L() is never a no-op (e.g. before serve/agent load config).
-	if err := core.InitLogger(false); err != nil {
+	// Initialize a minimal logger (error level) so zap.L() is never a no-op.
+	// Commands re-initialize with config; agent defaults to quiet (error level) for clean output.
+	if err := core.InitLogger(false, "error"); err != nil {
 		log.Fatal("Failed to initialize logger:", err)
 	}
-
-	zap.L().Info("starting orla")
 
 	applyVersionDefaults()
 

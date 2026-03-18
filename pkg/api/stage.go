@@ -58,6 +58,7 @@ type Stage struct {
 	TopP               *float64
 	ResponseFormat     *StructuredOutputRequest
 	ChatTemplateKwargs map[string]any
+	ReasoningEffort    string
 
 	StageSchedulingPolicy   string
 	RequestSchedulingPolicy string
@@ -91,6 +92,7 @@ func (s *Stage) SetTemperature(f float64)                        { s.Temperature
 func (s *Stage) SetTopP(f float64)                               { s.TopP = &f }
 func (s *Stage) SetResponseFormat(r *StructuredOutputRequest)    { s.ResponseFormat = r }
 func (s *Stage) SetChatTemplateKwargs(kwargs map[string]any)     { s.ChatTemplateKwargs = kwargs }
+func (s *Stage) SetReasoningEffort(effort string)                { s.ReasoningEffort = effort }
 func (s *Stage) SetSchedulingPolicy(policy string)               { s.StageSchedulingPolicy = policy }
 func (s *Stage) SetRequestSchedulingPolicy(policy string)        { s.RequestSchedulingPolicy = policy }
 func (s *Stage) SetSchedulingHints(hints *SchedulingHints)       { s.SchedulingHints = hints }
@@ -151,6 +153,7 @@ func (s *Stage) applyInferenceOptions(r *ExecuteRequest) {
 	r.TopP = s.TopP
 	r.ResponseFormat = s.ResponseFormat
 	r.ChatTemplateKwargs = s.ChatTemplateKwargs
+	r.ReasoningEffort = s.ReasoningEffort
 	r.SchedulingPolicy = s.StageSchedulingPolicy
 	r.RequestSchedulingPolicy = s.RequestSchedulingPolicy
 	r.SchedulingHints = s.SchedulingHints

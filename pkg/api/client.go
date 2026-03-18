@@ -127,6 +127,8 @@ type ExecuteRequest struct {
 	CachePolicy string `json:"cache_policy,omitempty"`
 	// CacheHints are optional per-stage cache parameters.
 	CacheHints *CacheHints `json:"cache_hints,omitempty"`
+	// ReasoningEffort controls thinking for reasoning-capable models ("high", "medium", "low", "none").
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 // GetStageID returns the stage ID for this request.

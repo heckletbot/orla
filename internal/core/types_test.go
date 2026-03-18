@@ -7,7 +7,6 @@ import (
 )
 
 func TestLLMInferenceAPIType_String(t *testing.T) {
-	assert.Equal(t, "ollama", string(LLMInferenceAPITypeOllama))
 	assert.Equal(t, "openai", string(LLMInferenceAPITypeOpenAI))
 	assert.Equal(t, "sglang", string(LLMInferenceAPITypeSGLang))
 }
@@ -22,11 +21,11 @@ func TestLLMBackend_Empty(t *testing.T) {
 func TestLLMBackend_WithValues(t *testing.T) {
 	backend := &LLMBackend{
 		Endpoint:     "http://localhost:8080",
-		Type:         LLMInferenceAPITypeOllama,
+		Type:         LLMInferenceAPITypeOpenAI,
 		APIKeyEnvVar: "API_KEY",
 	}
 
 	assert.Equal(t, "http://localhost:8080", backend.Endpoint)
-	assert.Equal(t, LLMInferenceAPITypeOllama, backend.Type)
+	assert.Equal(t, LLMInferenceAPITypeOpenAI, backend.Type)
 	assert.Equal(t, "API_KEY", backend.APIKeyEnvVar)
 }

@@ -7,11 +7,11 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// InitLogger initializes zap's global logger
-// After calling this, we use zap.L() directly.
-// The logger is explicitly configured to write to stderr to avoid interfering
-// with tool stdout (especially important in stdio mode where stdout is used for MCP protocol).
-func InitLogger(pretty bool) error {
+// InitLogger initializes zap's global logger.
+// pretty: use development (pretty) format when true, production JSON when false.
+// level: "debug", "info", "warn", "error", "fatal"; empty means "info".
+// Output is stderr to avoid interfering with tool stdout (critical for stdio/MCP).
+func InitLogger(pretty bool, level string) error {
 	var config zap.Config
 
 	if pretty {
@@ -22,8 +22,14 @@ func InitLogger(pretty bool) error {
 		config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 	}
 
-	// Explicitly set output to stderr to avoid interfering with tool stdout
-	// This is critical in stdio mode where stdout is used for MCP protocol
+	if level != "" {
+		var l zapcore.Level
+		if err := l.UnmarshalText([]byte(level)); err != nil {
+			return fmt.Errorf("invalid log level %q: %w", level, err)
+		}
+		config.Level = zap.NewAtomicLevelAt(l)
+	}
+
 	config.OutputPaths = []string{"stderr"}
 	config.ErrorOutputPaths = []string{"stderr"}
 

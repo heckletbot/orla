@@ -34,7 +34,7 @@ func newServeCmd() *cobra.Command {
 			// Resolve logging format: CLI flag wins; otherwise config
 			resolvedPrettyLog := resolveLogFormat(cfg, prettyLog)
 
-			coreInitErr := core.InitLogger(resolvedPrettyLog)
+			coreInitErr := core.InitLogger(resolvedPrettyLog, cfg.LogLevel)
 			if coreInitErr != nil {
 				zap.L().Fatal("Failed to initialize logger", zap.Error(coreInitErr))
 			}

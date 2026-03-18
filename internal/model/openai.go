@@ -15,13 +15,14 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+const defaultStreamBufferSize = 255
+
 // NOTE(jadidbourbaki): I found the official OpenAI SDK client to be not very user friendly and kind of too bloated for our use case.
 // So we're going to use the go-openai library to make requests to the OpenAI-compatible API.
 
 // OpenAIProvider implements the Provider interface for OpenAI-compatible APIs.
 // This provider is intended to work with any server that implements the OpenAI Chat Completions API format
-// such as LM Studio, vLLM, and even ollama (even though we have a separate Ollama provider). For ollama,
-// this goes through Ollama's Open-AI compatible API [1].
+// such as LM Studio, vLLM, and Ollama. For Ollama, use endpoint http://host:11434/v1 [1].
 // [1] https://docs.ollama.com/api/openai-compatibility
 type OpenAIProvider struct {
 	modelName  string
@@ -66,14 +67,15 @@ func getOpenAICompatibleEndpoint(llmBackend *core.LLMBackend) (string, string, e
 	}
 
 	switch llmBackend.Type {
-	case core.LLMInferenceAPITypeOpenAI, core.LLMInferenceAPITypeSGLang, core.LLMInferenceAPITypeOllama:
-		// All three expose an OpenAI-compatible /v1/chat/completions endpoint.
+	case core.LLMInferenceAPITypeOpenAI, core.LLMInferenceAPITypeSGLang:
+		// Both expose an OpenAI-compatible /v1/chat/completions endpoint.
 	default:
 		return "", "", fmt.Errorf("[BUG] llm_backend.type must be %s or %s, got '%s': we should not be using this function for non-openai-compatible inference servers", core.LLMInferenceAPITypeOpenAI, core.LLMInferenceAPITypeSGLang, llmBackend.Type)
 	}
 
 	if llmBackend.APIKeyEnvVar == "" {
-		zap.L().Warn("llm_backend.api_key_env_var is not set, skipping authentication for OpenAI-compatible API at %s", zap.String("llm_backend.endpoint", llmBackend.Endpoint))
+		zap.L().Debug("llm_backend.api_key_env_var is not set, skipping authentication for OpenAI-compatible API",
+			zap.String("llm_backend.endpoint", llmBackend.Endpoint))
 		return llmBackend.Endpoint, "", nil
 	}
 
@@ -129,6 +131,9 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []Message, tools []*
 	if len(opts.ChatTemplateKwargs) > 0 {
 		req.ChatTemplateKwargs = opts.ChatTemplateKwargs
 	}
+	if opts.ReasoningEffort != "" {
+		req.ReasoningEffort = opts.ReasoningEffort
+	}
 
 	// Add tools if provided
 	if len(tools) > 0 {
@@ -172,7 +177,8 @@ func (p *OpenAIProvider) handleNonStreamingChat(ctx context.Context, req openai.
 
 	choice := completion.Choices[0]
 	response := &Response{
-		Content: choice.Message.Content,
+		Content:  choice.Message.Content,
+		Thinking: choice.Message.ReasoningContent,
 		Metrics: &ResponseMetrics{
 			PromptTokens:     completion.Usage.PromptTokens,
 			CompletionTokens: completion.Usage.CompletionTokens,
@@ -250,6 +256,12 @@ func (p *OpenAIProvider) handleStreamingChat(ctx context.Context, req openai.Cha
 				}
 				lastContentAt = now
 				ch <- &ContentEvent{Content: delta.Content}
+			}
+
+			// Accumulate reasoning/thinking content (Ollama, DeepSeek, etc.)
+			if delta.ReasoningContent != "" {
+				response.Thinking += delta.ReasoningContent
+				ch <- &ThinkingEvent{Content: delta.ReasoningContent}
 			}
 
 			// Accumulate tool calls if present

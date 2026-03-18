@@ -1,6 +1,6 @@
 # Orla agentic daemon + Ollama. Run: docker compose -f deploy/docker-compose.ollama.yaml up -d
 # Daemon API: http://localhost:8081. Pull a model first: docker compose exec ollama ollama pull llama3.2:3b
-# Then edit deploy/orla-ollama.yaml to set agentic_serving.llm_servers[0].model to match (e.g. ollama:llama3.2:3b).
+# Then edit deploy/orla-ollama.yaml to set agentic_serving.llm_servers[0].model to match (e.g. openai:llama3.2:3b) with endpoint http://ollama:11434/v1.
 
 services:
   ollama:

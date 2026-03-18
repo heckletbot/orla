@@ -54,7 +54,7 @@ export VLLM_MODEL=Qwen/Qwen3-8B
 docker compose -f deploy/docker-compose.vllm.yaml up -d
 ```
 
-Daemon API: **http://localhost:8081**. Update `deploy/orla-vllm.yaml` so `llm_servers[0].model` matches the model vLLM serves (e.g. `openai:Qwen/Qwen3-4B-Instruct-2507`).
+Daemon API: **http://localhost:8081**. When registering backends via the API, use `model_id: "openai:Qwen/Qwen3-4B-Instruct-2507"` to match the model vLLM serves.
 
 ### SGLang (GPU)
 
@@ -68,7 +68,7 @@ export SGLANG_MODEL=Qwen/Qwen3-8B
 docker compose -f deploy/docker-compose.sglang.yaml up -d
 ```
 
-Daemon API: **http://localhost:8081**. Update `deploy/orla-sglang.yaml` so `llm_servers[0].model` matches the model SGLang serves.
+Daemon API: **http://localhost:8081**. When registering backends via the API, use `model_id` to match the model SGLang serves.
 
 ## Multi-backend stacks (workflow demo and SWE-bench)
 

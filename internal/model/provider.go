@@ -31,7 +31,7 @@ func getProviderFactory(providerName string) (ProviderFactory, bool) {
 	return factory, ok
 }
 
-// ParseModelIdentifier parses a model identifier string (e.g., "ollama:llama3")
+// ParseModelIdentifier parses a model identifier string (e.g., "openai:llama3")
 // and returns the provider name and model name
 func ParseModelIdentifier(modelID string) (provider, modelName string, err error) {
 	parts := strings.SplitN(modelID, ":", 2)
@@ -85,10 +85,6 @@ func newProviderForModel(modelID string, backend *core.LLMBackend, cfg *config.O
 }
 
 func init() {
-	RegisterProviderFactory(string(core.LLMInferenceAPITypeOllama), func(modelName string, _ *core.LLMBackend, cfg *config.OrlaConfig) (Provider, error) {
-		return NewOllamaProvider(modelName, cfg)
-	})
-
 	RegisterProviderFactory(string(core.LLMInferenceAPITypeOpenAI), func(modelName string, _ *core.LLMBackend, cfg *config.OrlaConfig) (Provider, error) {
 		return NewOpenAIProvider(modelName, cfg.LLMBackend)
 	})

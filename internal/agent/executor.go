@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/dorcha-inc/orla/internal/config"
+	"github.com/dorcha-inc/orla/internal/core"
 	"github.com/dorcha-inc/orla/internal/model"
 	"github.com/dorcha-inc/orla/internal/tui"
 	"go.uber.org/zap"
@@ -65,6 +66,11 @@ func (e *Executor) Execute(ctx context.Context, prompt string, messages []model.
 	tui.Progress("Processing request")
 
 	opts := model.InferenceOptions{Stream: stream}
+	if e.cfg != nil && e.cfg.ShowThinking {
+		opts.ReasoningEffort = "high"
+	} else {
+		opts.ReasoningEffort = "none"
+	}
 	response, streamCh, err := e.provider.Chat(ctx, conversation, nil, opts)
 	if err != nil {
 		return nil, fmt.Errorf("model chat failed: %w", err)
@@ -262,6 +268,17 @@ func ExecuteAgentPrompt(prompt string, modelOverride string, configPath string) 
 	cfg, configErr := config.LoadConfig(configPath)
 	if configErr != nil {
 		return fmt.Errorf("failed to load config: %w", configErr)
+	}
+
+	// Re-initialize logger with config. Agent defaults to "error" when no config file
+	// so regular runs produce clean output (no info/warn logs).
+	logLevel := cfg.LogLevel
+	if configPath == "" {
+		logLevel = "error"
+	}
+
+	if initErr := core.InitLogger(cfg.LogFormat == config.OrlaLogFormatPretty, logLevel); initErr != nil {
+		return fmt.Errorf("failed to initialize logger: %w", initErr)
 	}
 
 	if modelOverride != "" {

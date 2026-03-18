@@ -189,8 +189,8 @@ func (p *delayProvider) EnsureReady(_ context.Context) error { return nil }
 func TestBackendExecutor_DefaultConcurrencyIsSerial(t *testing.T) {
 	manager := NewLLMBackendManager(nil)
 	manager.AddLLMBackend("b", &core.LLMBackend{
-		Type: core.LLMInferenceAPITypeOllama, Endpoint: "http://localhost:11434",
-	}, "ollama:m")
+		Type: core.LLMInferenceAPITypeOpenAI, Endpoint: "http://localhost:11434/v1",
+	}, "openai:m")
 
 	dp := &delayProvider{delay: 50 * time.Millisecond}
 	manager.mu.Lock()
@@ -217,9 +217,9 @@ func TestBackendExecutor_ConcurrencyRespected(t *testing.T) {
 	const concurrency = 3
 	manager := NewLLMBackendManager(nil)
 	manager.AddLLMBackend("b", &core.LLMBackend{
-		Type: core.LLMInferenceAPITypeOllama, Endpoint: "http://localhost:11434",
+		Type: core.LLMInferenceAPITypeOpenAI, Endpoint: "http://localhost:11434/v1",
 		MaxConcurrency: concurrency,
-	}, "ollama:m")
+	}, "openai:m")
 
 	dp := &delayProvider{delay: 100 * time.Millisecond}
 	manager.mu.Lock()

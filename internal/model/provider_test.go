@@ -28,16 +28,16 @@ func TestParseModelIdentifier(t *testing.T) {
 		expectedErr   bool
 	}{
 		{
-			name:          "valid ollama model",
-			modelID:       "ollama:llama3",
-			expectedProv:  "ollama",
+			name:          "valid openai model",
+			modelID:       "openai:llama3",
+			expectedProv:  "openai",
 			expectedModel: "llama3",
 			expectedErr:   false,
 		},
 		{
 			name:          "valid model with version",
-			modelID:       "ollama:llama3:8b",
-			expectedProv:  "ollama",
+			modelID:       "openai:llama3:8b",
+			expectedProv:  "openai",
 			expectedModel: "llama3:8b",
 			expectedErr:   false,
 		},
@@ -57,8 +57,8 @@ func TestParseModelIdentifier(t *testing.T) {
 		},
 		{
 			name:          "only provider",
-			modelID:       "ollama:",
-			expectedProv:  "ollama",
+			modelID:       "openai:",
+			expectedProv:  "openai",
 			expectedModel: "",
 			expectedErr:   false,
 		},
@@ -87,9 +87,10 @@ func TestNewProvider(t *testing.T) {
 		errContains string
 	}{
 		{
-			name: "valid ollama config",
+			name: "valid openai config",
 			cfg: &config.OrlaConfig{
-				Model: "ollama:llama3",
+				Model:      "openai:llama3",
+				LLMBackend: &core.LLMBackend{Type: core.LLMInferenceAPITypeOpenAI, Endpoint: "http://localhost:11434/v1"},
 			},
 			expectedErr: false,
 		},
@@ -131,7 +132,7 @@ func TestNewProvider(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				assert.NotNil(t, provider)
-				assert.Equal(t, "ollama", provider.Name())
+				assert.Equal(t, "openai", provider.Name())
 			}
 		})
 	}

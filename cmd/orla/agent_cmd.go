@@ -24,7 +24,7 @@ The prompt is provided as a single argument. If the prompt contains spaces, quot
 		},
 	}
 
-	cmd.Flags().StringVarP(&modelFlag, "model", "m", "", "Model to use (e.g., ollama:llama3)")
+	cmd.Flags().StringVarP(&modelFlag, "model", "m", "", "Model to use (e.g., openai:llama3)")
 	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to config file (default: use built-in defaults)")
 	return cmd
 }

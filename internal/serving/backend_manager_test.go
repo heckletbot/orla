@@ -20,9 +20,9 @@ func TestNewLLMServerManager(t *testing.T) {
 func TestLLMServerManager_AddServer(t *testing.T) {
 	manager := NewLLMBackendManager(nil)
 	manager.AddLLMBackend("server1", &core.LLMBackend{
-		Type:     core.LLMInferenceAPITypeOllama,
-		Endpoint: "http://localhost:11434",
-	}, "ollama:test-model")
+		Type:     core.LLMInferenceAPITypeOpenAI,
+		Endpoint: "http://localhost:11434/v1",
+	}, "openai:test-model")
 
 	servers := manager.ListLLMBackends()
 	require.Len(t, servers, 1)
@@ -31,9 +31,9 @@ func TestLLMServerManager_AddServer(t *testing.T) {
 
 func TestLLMServerManager_ListServers(t *testing.T) {
 	manager := NewLLMBackendManager(nil)
-	manager.AddLLMBackend("server1", &core.LLMBackend{}, "ollama:m1")
-	manager.AddLLMBackend("server2", &core.LLMBackend{}, "ollama:m2")
-	manager.AddLLMBackend("server3", &core.LLMBackend{}, "ollama:m3")
+	manager.AddLLMBackend("server1", &core.LLMBackend{Type: core.LLMInferenceAPITypeOpenAI, Endpoint: "http://localhost:11434/v1"}, "openai:m1")
+	manager.AddLLMBackend("server2", &core.LLMBackend{Type: core.LLMInferenceAPITypeOpenAI, Endpoint: "http://localhost:11434/v1"}, "openai:m2")
+	manager.AddLLMBackend("server3", &core.LLMBackend{Type: core.LLMInferenceAPITypeOpenAI, Endpoint: "http://localhost:11434/v1"}, "openai:m3")
 
 	servers := manager.ListLLMBackends()
 	require.Len(t, servers, 3)
@@ -51,9 +51,9 @@ func TestLLMServerManager_ListServers_Empty(t *testing.T) {
 func TestLLMServerManager_GetProvider(t *testing.T) {
 	manager := NewLLMBackendManager(nil)
 	manager.AddLLMBackend("server1", &core.LLMBackend{
-		Type:     core.LLMInferenceAPITypeOllama,
-		Endpoint: "http://localhost:11434",
-	}, "ollama:test-model")
+		Type:     core.LLMInferenceAPITypeOpenAI,
+		Endpoint: "http://localhost:11434/v1",
+	}, "openai:test-model")
 
 	ctx := context.Background()
 	provider, err := manager.GetModelProvider(ctx, "server1")
@@ -88,24 +88,26 @@ func TestLLMServerManager_GetHealthStatus_NotFound(t *testing.T) {
 }
 
 func TestLLMServerManager_GetHealthStatus_ProviderError(t *testing.T) {
+	// OpenAI provider's EnsureReady is a no-op (no health check), so it returns healthy.
+	// Connection errors surface on first inference request instead.
 	manager := NewLLMBackendManager(nil)
 	manager.AddLLMBackend("server1", &core.LLMBackend{
-		Type:     core.LLMInferenceAPITypeOllama,
-		Endpoint: "http://invalid-host:99999",
-	}, "ollama:test-model")
+		Type:     core.LLMInferenceAPITypeOpenAI,
+		Endpoint: "http://invalid-host:99999/v1",
+	}, "openai:test-model")
 
 	ctx := context.Background()
 	status, err := manager.GetHealthStatus(ctx, "server1")
-	assert.Equal(t, HealthStatusUnavailable, status)
-	assert.Error(t, err)
+	assert.Equal(t, HealthStatusHealthy, status)
+	assert.NoError(t, err)
 }
 
 func TestLLMServerManager_ConcurrentAccess(t *testing.T) {
 	manager := NewLLMBackendManager(nil)
 	manager.AddLLMBackend("server1", &core.LLMBackend{
-		Type:     core.LLMInferenceAPITypeOllama,
-		Endpoint: "http://localhost:11434",
-	}, "ollama:test-model")
+		Type:     core.LLMInferenceAPITypeOpenAI,
+		Endpoint: "http://localhost:11434/v1",
+	}, "openai:test-model")
 
 	done := make(chan bool, 10)
 	for i := 0; i < 10; i++ {

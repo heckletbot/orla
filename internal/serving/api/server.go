@@ -209,8 +209,8 @@ func (s *AgenticServer) handleExecuteStream(w http.ResponseWriter, ctx context.C
 type RegisterBackendRequest struct {
 	Name           string `json:"name"`                      // backend name (used as "backend" in execute requests)
 	Endpoint       string `json:"endpoint"`                  // e.g. "http://vllm:8000/v1", "http://localhost:11434"
-	Type           string `json:"type"`                      // "openai" or "ollama" or "sglang"
-	ModelID        string `json:"model_id"`                  // full model identifier e.g. "openai:Qwen/Qwen3-4B-Instruct-2507", "ollama:llama3"
+	Type           string `json:"type"`                      // "openai" or "sglang"
+	ModelID        string `json:"model_id"`                  // full model identifier e.g. "openai:Qwen/Qwen3-4B-Instruct-2507", "openai:llama3"
 	APIKeyEnvVar   string `json:"api_key_env_var,omitempty"` // optional env var name for API key (for openai-type backends)
 	MaxConcurrency int    `json:"max_concurrency,omitempty"` // max concurrent requests to this backend (default 1)
 }
@@ -247,14 +247,14 @@ func (s *AgenticServer) handleRegisterBackend(w http.ResponseWriter, r *http.Req
 
 	backendType := core.LLMInferenceAPIType(req.Type)
 	switch backendType {
-	case core.LLMInferenceAPITypeOpenAI, core.LLMInferenceAPITypeOllama, core.LLMInferenceAPITypeSGLang:
+	case core.LLMInferenceAPITypeOpenAI, core.LLMInferenceAPITypeSGLang:
 		// supported
 	default:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		core.WriteJSONResponse(w, RegisterBackendResponse{
 			Success: false,
-			Error:   fmt.Sprintf("type must be one of: openai, ollama, sglang; got %q", req.Type),
+			Error:   fmt.Sprintf("type must be one of: openai, sglang; got %q", req.Type),
 		})
 		return
 	}
