@@ -6,30 +6,9 @@ import (
 
 	"github.com/dorcha-inc/orla/internal/core"
 	"github.com/dorcha-inc/orla/internal/model"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-type mockProvider struct {
-	name          string
-	lastMaxTokens *int
-}
-
-func (m *mockProvider) Name() string {
-	return m.name
-}
-
-func (m *mockProvider) Chat(_ context.Context, _ []model.Message, _ []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
-	m.lastMaxTokens = opts.MaxTokens
-	return &model.Response{
-		Content: "test response",
-	}, nil, nil
-}
-
-func (m *mockProvider) EnsureReady(_ context.Context) error {
-	return nil
-}
 
 func TestLayer_NewLayer(t *testing.T) {
 	layer := NewAgenticLayer()
@@ -53,7 +32,7 @@ func TestLayer_Execute_WithMaxTokens(t *testing.T) {
 		Endpoint: "http://localhost:11434/v1",
 	}, "openai:test-model")
 
-	mock := &mockProvider{name: "mock"}
+	mock := model.NewMockProvider().WithContent("test response").Build()
 	layer.llmBackendManager.mu.Lock()
 	layer.llmBackendManager.providers["test-server"] = mock
 	layer.llmBackendManager.mu.Unlock()
@@ -63,9 +42,10 @@ func TestLayer_Execute_WithMaxTokens(t *testing.T) {
 	}, nil, model.InferenceOptions{MaxTokens: core.IntPtr(42)})
 	require.NoError(t, err)
 	assert.Equal(t, "test response", response.Content)
-	assert.NotNil(t, mock.lastMaxTokens)
-	require.NotNil(t, mock.lastMaxTokens)
-	assert.Equal(t, 42, *mock.lastMaxTokens)
+	lastOpts := mock.LastInferenceOptions()
+	require.NotNil(t, lastOpts)
+	require.NotNil(t, lastOpts.MaxTokens)
+	assert.Equal(t, 42, *lastOpts.MaxTokens)
 }
 
 func TestLayer_Execute_WithoutMaxTokens(t *testing.T) {
@@ -75,7 +55,7 @@ func TestLayer_Execute_WithoutMaxTokens(t *testing.T) {
 		Endpoint: "http://localhost:11434/v1",
 	}, "openai:test-model")
 
-	mock := &mockProvider{name: "mock"}
+	mock := model.NewMockProvider().WithContent("test response").Build()
 	layer.llmBackendManager.mu.Lock()
 	layer.llmBackendManager.providers["test-server"] = mock
 	layer.llmBackendManager.mu.Unlock()
@@ -85,7 +65,9 @@ func TestLayer_Execute_WithoutMaxTokens(t *testing.T) {
 	}, nil, model.InferenceOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "test response", response.Content)
-	assert.Nil(t, mock.lastMaxTokens)
+	lastOpts := mock.LastInferenceOptions()
+	require.NotNil(t, lastOpts)
+	assert.Nil(t, lastOpts.MaxTokens)
 }
 
 func TestLayer_Execute_ServerNotFound(t *testing.T) {
@@ -116,7 +98,7 @@ func TestLayer_ExecuteStream(t *testing.T) {
 		Endpoint: "http://localhost:11434/v1",
 	}, "openai:test-model")
 
-	mock := &mockProvider{name: "mock"}
+	mock := model.NewMockProvider().WithContent("test response").Build()
 	layer.llmBackendManager.mu.Lock()
 	layer.llmBackendManager.providers["test-server"] = mock
 	layer.llmBackendManager.mu.Unlock()

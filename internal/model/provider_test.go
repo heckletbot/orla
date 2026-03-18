@@ -1,23 +1,13 @@
 package model
 
 import (
-	"context"
 	"testing"
 
 	"github.com/dorcha-inc/orla/internal/config"
 	"github.com/dorcha-inc/orla/internal/core"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-type stubProvider struct{}
-
-func (s *stubProvider) Name() string { return "stub" }
-func (s *stubProvider) Chat(_ context.Context, _ []Message, _ []*mcp.Tool, _ InferenceOptions) (*Response, <-chan StreamEvent, error) {
-	return &Response{Content: "ok"}, nil, nil
-}
-func (s *stubProvider) EnsureReady(_ context.Context) error { return nil }
 
 func TestParseModelIdentifier(t *testing.T) {
 	tests := []struct {
@@ -143,7 +133,7 @@ func TestRegisterProviderFactory(t *testing.T) {
 		assert.Equal(t, "demo", modelName)
 		assert.NotNil(t, cfg)
 		_ = backend
-		return &stubProvider{}, nil
+		return NewMockProvider().WithName("stub").WithContent("ok").Build(), nil
 	})
 
 	cfg := &config.OrlaConfig{

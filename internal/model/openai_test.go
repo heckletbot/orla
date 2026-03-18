@@ -3,9 +3,6 @@ package model
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -231,39 +228,15 @@ func TestNewOpenAIProvider_RequiresAPIKeyEnvVarValue(t *testing.T) {
 }
 
 func TestOpenAIProvider_Chat_NonStreaming_BasicAndToolCalls(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/chat/completions", r.URL.Path)
-		require.Equal(t, "POST", r.Method)
-		require.True(t, strings.HasPrefix(r.Header.Get("Authorization"), "Bearer "), "expected Bearer auth header")
-
-		w.Header().Set("Content-Type", "application/json")
-		_, err := w.Write([]byte(`{
-  "id":"cmpl_1",
-  "object":"chat.completion",
-  "created":0,
-  "model":"x",
-  "choices":[
-    {
-      "index":0,
-      "message":{
-        "role":"assistant",
-        "content":"hello",
-        "tool_calls":[
-          {"id":"call_abc","type":"function","function":{"name":"do","arguments":"{\"x\":\"y\"}"}}
-        ]
-      },
-      "finish_reason":"stop"
-    }
-  ]
-}`))
-		require.NoError(t, err)
-	}))
-
+	srv := NewMockLLMServer().
+		ReturnContent("hello").
+		ReturnToolCallWithID("call_abc", "do", `{"x":"y"}`).
+		Start()
 	t.Cleanup(srv.Close)
 
 	t.Setenv("ORLA_TEST_OPENAI_KEY", "k")
 	llmBackend := &core.LLMBackend{
-		Endpoint:     srv.URL,
+		Endpoint:     srv.URL(),
 		Type:         core.LLMInferenceAPITypeOpenAI,
 		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
@@ -283,26 +256,14 @@ func TestOpenAIProvider_Chat_NonStreaming_BasicAndToolCalls(t *testing.T) {
 }
 
 func TestOpenAIProvider_Chat_Streaming_Content(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/chat/completions", r.URL.Path)
-		require.Equal(t, "POST", r.Method)
-
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
-
-		// Minimal SSE stream that go-openai can parse.
-		_, err := w.Write([]byte("data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"he\"}}]}\n\n"))
-		require.NoError(t, err)
-		_, err = w.Write([]byte("data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"llo\"},\"finish_reason\":\"stop\"}]}\n\n"))
-		require.NoError(t, err)
-		_, err = w.Write([]byte("data: [DONE]\n\n"))
-		require.NoError(t, err)
-	}))
+	srv := NewMockLLMServer().
+		ReturnStreamChunks([]string{"he", "llo"}).
+		Start()
 	t.Cleanup(srv.Close)
 
 	t.Setenv("ORLA_TEST_OPENAI_KEY", "k")
 	llmBackend := &core.LLMBackend{
-		Endpoint:     srv.URL,
+		Endpoint:     srv.URL(),
 		Type:         core.LLMInferenceAPITypeOpenAI,
 		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
@@ -324,36 +285,12 @@ func TestOpenAIProvider_Chat_Streaming_Content(t *testing.T) {
 
 func TestOpenAIProvider_Chat_WithMaxTokens(t *testing.T) {
 	maxTokens := 100
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/chat/completions", r.URL.Path)
-		require.Equal(t, "POST", r.Method)
-
-		var req openai.ChatCompletionRequest
-		err := json.NewDecoder(r.Body).Decode(&req)
-		require.NoError(t, err)
-
-		// Verify that MaxTokens is set correctly
-		require.Equal(t, maxTokens, req.MaxTokens)
-
-		resp := openai.ChatCompletionResponse{
-			Choices: []openai.ChatCompletionChoice{
-				{
-					Message: openai.ChatCompletionMessage{
-						Role:    "assistant",
-						Content: "Short response",
-					},
-				},
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		err = json.NewEncoder(w).Encode(resp)
-		require.NoError(t, err)
-	}))
-	defer srv.Close()
+	srv := NewMockLLMServer().ReturnContent("Short response").Start()
+	t.Cleanup(srv.Close)
 
 	t.Setenv("ORLA_TEST_OPENAI_KEY", "test-key")
 	llmBackend := &core.LLMBackend{
-		Endpoint:     srv.URL,
+		Endpoint:     srv.URL(),
 		Type:         core.LLMInferenceAPITypeOpenAI,
 		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
@@ -367,39 +304,19 @@ func TestOpenAIProvider_Chat_WithMaxTokens(t *testing.T) {
 	require.Nil(t, ch)
 	require.NotNil(t, resp)
 	require.Equal(t, "Short response", resp.Content)
+
+	var req openai.ChatCompletionRequest
+	require.NoError(t, json.Unmarshal(srv.LastRequestBody(), &req))
+	require.Equal(t, maxTokens, req.MaxTokens)
 }
 
 func TestOpenAIProvider_Chat_WithoutMaxTokens(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/chat/completions", r.URL.Path)
-		require.Equal(t, "POST", r.Method)
-
-		var req openai.ChatCompletionRequest
-		err := json.NewDecoder(r.Body).Decode(&req)
-		require.NoError(t, err)
-
-		// Verify that MaxTokens is 0 (default/not set) when maxTokens is nil
-		require.Equal(t, 0, req.MaxTokens)
-
-		resp := openai.ChatCompletionResponse{
-			Choices: []openai.ChatCompletionChoice{
-				{
-					Message: openai.ChatCompletionMessage{
-						Role:    "assistant",
-						Content: "Response",
-					},
-				},
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		err = json.NewEncoder(w).Encode(resp)
-		require.NoError(t, err)
-	}))
-	defer srv.Close()
+	srv := NewMockLLMServer().ReturnContent("Response").Start()
+	t.Cleanup(srv.Close)
 
 	t.Setenv("ORLA_TEST_OPENAI_KEY", "test-key")
 	llmBackend := &core.LLMBackend{
-		Endpoint:     srv.URL,
+		Endpoint:     srv.URL(),
 		Type:         core.LLMInferenceAPITypeOpenAI,
 		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
@@ -413,40 +330,20 @@ func TestOpenAIProvider_Chat_WithoutMaxTokens(t *testing.T) {
 	require.Nil(t, ch)
 	require.NotNil(t, resp)
 	require.Equal(t, "Response", resp.Content)
+
+	var req openai.ChatCompletionRequest
+	require.NoError(t, json.Unmarshal(srv.LastRequestBody(), &req))
+	require.Equal(t, 0, req.MaxTokens)
 }
 
 func TestOpenAIProvider_Chat_WithMaxTokensZero(t *testing.T) {
 	maxTokens := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/chat/completions", r.URL.Path)
-		require.Equal(t, "POST", r.Method)
-
-		var req openai.ChatCompletionRequest
-		err := json.NewDecoder(r.Body).Decode(&req)
-		require.NoError(t, err)
-
-		// Verify that MaxTokens is set even when 0
-		require.Equal(t, 0, req.MaxTokens)
-
-		resp := openai.ChatCompletionResponse{
-			Choices: []openai.ChatCompletionChoice{
-				{
-					Message: openai.ChatCompletionMessage{
-						Role:    "assistant",
-						Content: "",
-					},
-				},
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		err = json.NewEncoder(w).Encode(resp)
-		require.NoError(t, err)
-	}))
-	defer srv.Close()
+	srv := NewMockLLMServer().ReturnContent("").Start()
+	t.Cleanup(srv.Close)
 
 	t.Setenv("ORLA_TEST_OPENAI_KEY", "test-key")
 	llmBackend := &core.LLMBackend{
-		Endpoint:     srv.URL,
+		Endpoint:     srv.URL(),
 		Type:         core.LLMInferenceAPITypeOpenAI,
 		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
@@ -459,32 +356,22 @@ func TestOpenAIProvider_Chat_WithMaxTokensZero(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, ch)
 	require.NotNil(t, resp)
+
+	var req openai.ChatCompletionRequest
+	require.NoError(t, json.Unmarshal(srv.LastRequestBody(), &req))
+	require.Equal(t, 0, req.MaxTokens)
 }
 
 func TestOpenAIProvider_Chat_Streaming_WithToolCalls(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/chat/completions", r.URL.Path)
-		require.Equal(t, "POST", r.Method)
-
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
-
-		// Stream with tool calls
-		_, err := w.Write([]byte("data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\n"))
-		require.NoError(t, err)
-		_, err = w.Write([]byte("data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"tool\",\"arguments\":\"{\\\"x\\\":\\\"y\\\"}\"}}]}}]}\n\n"))
-		require.NoError(t, err)
-		_, err = w.Write([]byte("data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"))
-		require.NoError(t, err)
-		_, err = w.Write([]byte("data: [DONE]\n\n"))
-		require.NoError(t, err)
-	}))
+	srv := NewMockLLMServer().
+		ReturnStreamWithToolCalls("hi", mockLLMToolCall{ID: "call_1", Name: "tool", Args: `{"x":"y"}`}).
+		Start()
 	t.Cleanup(srv.Close)
 
 	t.Setenv("ORLA_TEST_OPENAI_KEY", "k")
 
 	llmBackend := &core.LLMBackend{
-		Endpoint:     srv.URL,
+		Endpoint:     srv.URL(),
 		Type:         core.LLMInferenceAPITypeOpenAI,
 		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
@@ -536,17 +423,13 @@ func TestConvertMessageToOpenAI_NonToolRole(t *testing.T) {
 }
 
 func TestOpenAIProvider_Chat_NonStreaming_NoChoices(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, err := w.Write([]byte(`{"id":"x","object":"chat.completion","created":0,"model":"m","choices":[]}`))
-		require.NoError(t, err)
-	}))
+	srv := NewMockLLMServer().ReturnNoChoices().Start()
 	t.Cleanup(srv.Close)
 
 	t.Setenv("ORLA_TEST_OPENAI_KEY", "k")
 
 	llmBackend := &core.LLMBackend{
-		Endpoint:     srv.URL,
+		Endpoint:     srv.URL(),
 		Type:         core.LLMInferenceAPITypeOpenAI,
 		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
@@ -645,41 +528,12 @@ func TestConvertOpenAIToolCalls_ErrorPropagates(t *testing.T) {
 
 func TestOpenAIProvider_Chat_WithResponseFormat_NonStreaming(t *testing.T) {
 	minimalSchema := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}`)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/chat/completions", r.URL.Path)
-		require.Equal(t, "POST", r.Method)
-
-		var req openai.ChatCompletionRequest
-		err := json.NewDecoder(r.Body).Decode(&req)
-		require.NoError(t, err)
-
-		require.NotNil(t, req.ResponseFormat, "request should include response_format")
-		require.Equal(t, openai.ChatCompletionResponseFormatTypeJSONSchema, req.ResponseFormat.Type)
-		require.NotNil(t, req.ResponseFormat.JSONSchema)
-		require.Equal(t, "test-schema", req.ResponseFormat.JSONSchema.Name)
-		require.True(t, req.ResponseFormat.JSONSchema.Strict)
-		require.NotNil(t, req.ResponseFormat.JSONSchema.Schema)
-
-		// Return valid JSON conforming to the schema
-		resp := openai.ChatCompletionResponse{
-			Choices: []openai.ChatCompletionChoice{
-				{
-					Message: openai.ChatCompletionMessage{
-						Role:    "assistant",
-						Content: `{"answer":"hello"}`,
-					},
-				},
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		err = json.NewEncoder(w).Encode(resp)
-		require.NoError(t, err)
-	}))
+	srv := NewMockLLMServer().ReturnContent(`{"answer":"hello"}`).Start()
 	t.Cleanup(srv.Close)
 
 	t.Setenv("ORLA_TEST_OPENAI_KEY", "k")
 	llmBackend := &core.LLMBackend{
-		Endpoint:     srv.URL,
+		Endpoint:     srv.URL(),
 		Type:         core.LLMInferenceAPITypeOpenAI,
 		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
@@ -701,42 +555,27 @@ func TestOpenAIProvider_Chat_WithResponseFormat_NonStreaming(t *testing.T) {
 	require.NotNil(t, resp)
 	require.Equal(t, `{"answer":"hello"}`, resp.Content)
 
-	// Assert returned content is valid JSON
+	var req openai.ChatCompletionRequest
+	require.NoError(t, json.Unmarshal(srv.LastRequestBody(), &req))
+	require.NotNil(t, req.ResponseFormat, "request should include response_format")
+	require.Equal(t, openai.ChatCompletionResponseFormatTypeJSONSchema, req.ResponseFormat.Type)
+	require.NotNil(t, req.ResponseFormat.JSONSchema)
+	require.Equal(t, "test-schema", req.ResponseFormat.JSONSchema.Name)
+	require.True(t, req.ResponseFormat.JSONSchema.Strict)
+	require.NotNil(t, req.ResponseFormat.JSONSchema.Schema)
+
 	var parsed map[string]any
-	err = json.Unmarshal([]byte(resp.Content), &parsed)
-	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(resp.Content), &parsed))
 	require.Equal(t, "hello", parsed["answer"])
 }
 
 func TestOpenAIProvider_Chat_WithoutResponseFormat_RequestOmitsResponseFormat(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/chat/completions", r.URL.Path)
-
-		var req openai.ChatCompletionRequest
-		err := json.NewDecoder(r.Body).Decode(&req)
-		require.NoError(t, err)
-
-		require.Nil(t, req.ResponseFormat, "request should not include response_format when opts.ResponseFormat is nil")
-
-		resp := openai.ChatCompletionResponse{
-			Choices: []openai.ChatCompletionChoice{
-				{
-					Message: openai.ChatCompletionMessage{
-						Role:    "assistant",
-						Content: "plain text",
-					},
-				},
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		err = json.NewEncoder(w).Encode(resp)
-		require.NoError(t, err)
-	}))
+	srv := NewMockLLMServer().ReturnContent("plain text").Start()
 	t.Cleanup(srv.Close)
 
 	t.Setenv("ORLA_TEST_OPENAI_KEY", "k")
 	llmBackend := &core.LLMBackend{
-		Endpoint:     srv.URL,
+		Endpoint:     srv.URL(),
 		Type:         core.LLMInferenceAPITypeOpenAI,
 		APIKeyEnvVar: "ORLA_TEST_OPENAI_KEY",
 	}
@@ -749,4 +588,8 @@ func TestOpenAIProvider_Chat_WithoutResponseFormat_RequestOmitsResponseFormat(t 
 	require.Nil(t, ch)
 	require.NotNil(t, resp)
 	require.Equal(t, "plain text", resp.Content)
+
+	var req openai.ChatCompletionRequest
+	require.NoError(t, json.Unmarshal(srv.LastRequestBody(), &req))
+	require.Nil(t, req.ResponseFormat, "request should not include response_format when opts.ResponseFormat is nil")
 }

@@ -207,14 +207,7 @@ func TestExecutor_Execute_NoToolCalls(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.OrlaConfig{Streaming: false}
 
-	provider := &mockProvider{
-		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
-			return &model.Response{
-				Content:   "Hello, world!",
-				ToolCalls: []model.ToolCallWithID{},
-			}, nil, nil
-		},
-	}
+	provider := model.NewMockProvider().WithContent("Hello, world!").Build()
 
 	executor := &Executor{provider: provider, cfg: cfg}
 	response, err := executor.Execute(ctx, "test prompt", nil, false, nil)
@@ -231,23 +224,21 @@ func TestExecutor_Execute_Streaming(t *testing.T) {
 	chunks := []string{"Hello", " ", "world", "!"}
 
 	streamCh := make(chan model.StreamEvent, len(chunks))
-	provider := &mockProvider{
-		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
-			if opts.Stream {
-				go func() {
-					for _, chunk := range chunks {
-						streamCh <- &model.ContentEvent{Content: chunk}
-					}
-					close(streamCh)
-				}()
-				return &model.Response{
-					Content:   "Hello world!",
-					ToolCalls: []model.ToolCallWithID{},
-				}, streamCh, nil
-			}
-			return &model.Response{Content: "test"}, nil, nil
-		},
-	}
+	provider := model.NewMockProvider().WithChatFunc(func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
+		if opts.Stream {
+			go func() {
+				for _, chunk := range chunks {
+					streamCh <- &model.ContentEvent{Content: chunk}
+				}
+				close(streamCh)
+			}()
+			return &model.Response{
+				Content:   "Hello world!",
+				ToolCalls: []model.ToolCallWithID{},
+			}, streamCh, nil
+		}
+		return &model.Response{Content: "test"}, nil, nil
+	}).Build()
 
 	var receivedChunks []string
 	streamHandler := func(event model.StreamEvent) error {
@@ -269,18 +260,16 @@ func TestExecutor_Execute_StreamingError(t *testing.T) {
 	cfg := &config.OrlaConfig{Streaming: true}
 
 	streamCh := make(chan model.StreamEvent, 1)
-	provider := &mockProvider{
-		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
-			go func() {
-				streamCh <- &model.ContentEvent{Content: "chunk"}
-				close(streamCh)
-			}()
-			return &model.Response{
-				Content:   "test",
-				ToolCalls: []model.ToolCallWithID{},
-			}, streamCh, nil
-		},
-	}
+	provider := model.NewMockProvider().WithChatFunc(func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
+		go func() {
+			streamCh <- &model.ContentEvent{Content: "chunk"}
+			close(streamCh)
+		}()
+		return &model.Response{
+			Content:   "test",
+			ToolCalls: []model.ToolCallWithID{},
+		}, streamCh, nil
+	}).Build()
 
 	streamHandler := func(event model.StreamEvent) error {
 		return errors.New("stream handler error")
@@ -296,11 +285,7 @@ func TestExecutor_Execute_ChatError(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.OrlaConfig{Streaming: false}
 
-	provider := &mockProvider{
-		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
-			return nil, nil, errors.New("chat error")
-		},
-	}
+	provider := model.NewMockProvider().WithChatError(errors.New("chat error")).Build()
 
 	executor := &Executor{provider: provider, cfg: cfg}
 	_, err := executor.Execute(ctx, "test prompt", nil, false, nil)
@@ -312,11 +297,9 @@ func TestExecutor_Execute_NilResponse(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.OrlaConfig{Streaming: false}
 
-	provider := &mockProvider{
-		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
-			return nil, nil, nil
-		},
-	}
+	provider := model.NewMockProvider().WithChatFunc(func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
+		return nil, nil, nil
+	}).Build()
 
 	executor := &Executor{provider: provider, cfg: cfg}
 	_, err := executor.Execute(ctx, "test prompt", nil, false, nil)
@@ -328,7 +311,7 @@ func TestExecutor_Execute_StreamingWithoutHandler(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.OrlaConfig{Streaming: true}
 
-	provider := &mockProvider{}
+	provider := model.NewMockProvider().Build()
 	executor := &Executor{provider: provider, cfg: cfg}
 	_, err := executor.Execute(ctx, "test prompt", nil, true, nil)
 	require.Error(t, err)
@@ -339,16 +322,7 @@ func TestExecutor_Execute_WithExistingMessages(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.OrlaConfig{Streaming: false}
 
-	var receivedMessages []model.Message
-	provider := &mockProvider{
-		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
-			receivedMessages = messages
-			return &model.Response{
-				Content:   "response",
-				ToolCalls: []model.ToolCallWithID{},
-			}, nil, nil
-		},
-	}
+	provider := model.NewMockProvider().WithContent("response").Build()
 
 	existingMessages := []model.Message{
 		{Role: model.MessageRoleUser, Content: "previous message"},
@@ -358,23 +332,23 @@ func TestExecutor_Execute_WithExistingMessages(t *testing.T) {
 	response, err := executor.Execute(ctx, "new prompt", existingMessages, false, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, response)
-	assert.Len(t, receivedMessages, 2)
-	assert.Equal(t, "previous message", receivedMessages[0].Content)
-	assert.Equal(t, "new prompt", receivedMessages[1].Content)
+	receivedMessages := provider.ReceivedMessages()
+	require.Len(t, receivedMessages, 1)
+	assert.Len(t, receivedMessages[0], 2)
+	assert.Equal(t, "previous message", receivedMessages[0][0].Content)
+	assert.Equal(t, "new prompt", receivedMessages[0][1].Content)
 }
 
 func TestExecutor_Execute_StreamChannelNil(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.OrlaConfig{Streaming: true}
 
-	provider := &mockProvider{
-		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
-			return &model.Response{
-				Content:   "test",
-				ToolCalls: []model.ToolCallWithID{},
-			}, nil, nil
-		},
-	}
+	provider := model.NewMockProvider().WithChatFunc(func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
+		return &model.Response{
+			Content:   "test",
+			ToolCalls: []model.ToolCallWithID{},
+		}, nil, nil
+	}).Build()
 
 	executor := &Executor{provider: provider, cfg: cfg}
 	_, err := executor.Execute(ctx, "test", nil, true, func(event model.StreamEvent) error { return nil })
@@ -386,22 +360,15 @@ func TestExecutor_Execute_WithContent(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.OrlaConfig{Streaming: false}
 
-	var receivedMessages []model.Message
-	provider := &mockProvider{
-		chatFunc: func(ctx context.Context, messages []model.Message, tools []*mcp.Tool, opts model.InferenceOptions) (*model.Response, <-chan model.StreamEvent, error) {
-			receivedMessages = messages
-			return &model.Response{
-				Content:   "Here's the result",
-				ToolCalls: []model.ToolCallWithID{},
-			}, nil, nil
-		},
-	}
+	provider := model.NewMockProvider().WithContent("Here's the result").Build()
 
 	executor := &Executor{provider: provider, cfg: cfg}
 	response, err := executor.Execute(ctx, "test", nil, false, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, response)
 	assert.Equal(t, "Here's the result", response.Content)
-	assert.Len(t, receivedMessages, 1)
-	assert.Equal(t, "test", receivedMessages[0].Content)
+	receivedMessages := provider.ReceivedMessages()
+	require.Len(t, receivedMessages, 1)
+	assert.Len(t, receivedMessages[0], 1)
+	assert.Equal(t, "test", receivedMessages[0][0].Content)
 }
