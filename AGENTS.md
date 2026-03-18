@@ -196,3 +196,32 @@ Orla uses Viper for YAML config loading. The config struct (`config.OrlaConfig`)
 ## Model Identifiers
 
 Models follow the `provider:model-name` format (e.g., `openai:qwen3:0.6b`). The provider prefix selects which `ProviderFactory` creates the `Provider` implementation.
+
+## Daemon API
+
+The `orla serve` daemon exposes an HTTP API for inference and backend management. Base path: `/api/v1`.
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/v1/health` | GET | Health check |
+| `/api/v1/execute` | POST | Run inference (streaming or non-streaming) |
+| `/api/v1/backends` | GET | List registered backends |
+| `/api/v1/backends` | POST | Register an LLM backend |
+| `/api/v1/workflow/complete` | POST | Notify workflow completion for memory tracking |
+| `/metrics` | GET | Prometheus metrics |
+
+See `docs/openapi.yaml` for the full OpenAPI 3.0 spec.
+
+## Production Features
+
+The daemon includes production hardening:
+
+- **Request body limit**: 10MB max for JSON bodies (execute, register backend, workflow complete).
+- **Panic recovery**: Handlers are wrapped; panics are logged and return 500.
+- **HTTP timeouts**: ReadTimeout, ReadHeaderTimeout, WriteTimeout (30 min for inference), IdleTimeout, MaxHeaderBytes.
+- **Graceful shutdown**: On server error or SIGTERM/SIGINT, the daemon calls `Shutdown` before exiting.
+- **Prometheus metrics**: `orla_requests_total`, `orla_queue_wait_seconds`, `orla_backend_latency_seconds`, `orla_queue_depth` at `GET /metrics`.
+- **Retry with backoff**: Provider calls retry on 5xx, 429, and network errors (up to 3 attempts, exponential backoff).
+- **Rate limiting**: Optional `rate_limit_rps` in config limits execute and backends endpoints; 0 disables.
+
+Config options for `orla serve` (in `OrlaConfig`): `listen_address`, `rate_limit_rps`, `log_format`, `log_level`.
