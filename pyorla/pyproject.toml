@@ -1,0 +1,26 @@
+[project]
+name = "pyorla"
+version = "1.0.0"
+description = "Python SDK for Orla"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Dorcha Inc" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.28.1",
+    "langchain-core>=1.2.20",
+    "langgraph>=1.1.3",
+    "pydantic>=2.12.5",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.8,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+]
