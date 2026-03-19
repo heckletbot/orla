@@ -68,7 +68,7 @@ def _lc_msg_to_orla(msg: BaseMessage) -> Message:
 def orla_response_to_ai_message(resp: InferenceResponse) -> AIMessage:
     """Convert an Orla InferenceResponse to a LangChain AIMessage."""
     tool_calls: list[dict[str, Any]] = []
-    for raw_tc in resp.tool_calls:
+    for raw_tc in resp.tool_calls or []:
         tc = _parse_raw_tool_call(raw_tc)
         if tc is not None:
             tool_calls.append(tc)

@@ -171,10 +171,11 @@ def _parse_execute_response(data: dict) -> InferenceResponse:
             dispatch_ms=m.get("dispatch_ms", 0),
             backend_latency_ms=m.get("backend_latency_ms", 0),
         )
+    tool_calls = r.get("tool_calls") or []
     return InferenceResponse(
         content=r.get("content", ""),
         thinking=r.get("thinking", ""),
-        tool_calls=r.get("tool_calls", []),
+        tool_calls=tool_calls,
         metrics=metrics,
     )
 
