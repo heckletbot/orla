@@ -71,6 +71,10 @@ release:
   github:
     owner: harvard-cns
     name: orla
+  # If a workflow re-runs against the same tag, assets may already exist on the
+  # GitHub release. GoReleaser deletes the conflicting asset on 422 then retries.
+  # See https://goreleaser.com/customization/release/
+  replace_existing_artifacts: true
   # Mark as pre-release when TEST_MODE=true (for manual test releases)
   # Otherwise, mark as regular release (for tag-based production releases)
   prerelease: '{{ if eq .Env.TEST_MODE "true" }}true{{ else }}false{{ end }}'
