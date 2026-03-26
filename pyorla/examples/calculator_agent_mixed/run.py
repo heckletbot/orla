@@ -1,5 +1,8 @@
 """Calculator agent using LangGraph, pyorla, Ollama (triage), and Bedrock Mantle (tools).
 
+This script waits until the Ollama daemon responds and the triage model is available, then
+starts Orla via ``orla_runtime()`` and runs the mixed graph.
+
 Prerequisites:
 
 - The ``orla`` CLI on ``PATH`` (or ``ORLA_BIN``); this script starts a local daemon with
@@ -15,10 +18,15 @@ Run from the ``pyorla`` directory::
 
 from __future__ import annotations
 
+import contextlib
+import logging
 import os
+import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Annotated, Literal
 
+import httpx
 from langchain_core.messages import (
     AIMessage,
     AnyMessage,
@@ -40,6 +48,8 @@ from pyorla import (
     orla_runtime,
 )
 
+log = logging.getLogger(__name__)
+
 
 def _env(key: str, default: str) -> str:
     return os.environ.get(key, default).strip()
@@ -49,6 +59,63 @@ MANTLE_BASE_URL = "https://bedrock-mantle.us-east-2.api.aws/v1"
 MANTLE_MODEL_ID = "openai:mistral.ministral-3-3b-instruct"
 OLLAMA_ENDPOINT = "http://127.0.0.1:11434"
 OLLAMA_MODEL = "qwen3:0.6b"
+
+
+def _ollama_base_url() -> str:
+    return OLLAMA_ENDPOINT.rstrip("/")
+
+
+@contextlib.contextmanager
+def ollama_readiness_wait() -> Iterator[None]:
+    """Poll Ollama until the daemon and triage model are available (same idea as vLLM health wait)."""
+    base = _ollama_base_url()
+    version_url = f"{base}/api/version"
+    show_url = f"{base}/api/show"
+
+    log.info("Waiting for Ollama daemon at %s ...", base)
+    for attempt in range(1, 201):
+        try:
+            if httpx.get(version_url, timeout=5).status_code == 200:
+                log.info("Ollama daemon responded after %d check(s).", attempt)
+                break
+        except httpx.HTTPError:
+            pass
+        if attempt % 10 == 0:
+            log.info("Still waiting for Ollama daemon (check %d / 200) ...", attempt)
+        time.sleep(3)
+    else:
+        raise RuntimeError(
+            f"Ollama did not respond at {version_url}. Start Ollama or set OLLAMA_ENDPOINT."
+        )
+
+    log.info("Waiting for Ollama model %r (POST %s) ...", OLLAMA_MODEL, show_url)
+    for attempt in range(1, 201):
+        try:
+            r = httpx.post(
+                show_url,
+                json={"model": OLLAMA_MODEL},
+                timeout=60,
+            )
+            if r.status_code == 200:
+                log.info("Ollama model %r ready after %d check(s).", OLLAMA_MODEL, attempt)
+                break
+        except httpx.HTTPError:
+            pass
+        if attempt % 10 == 0:
+            log.info(
+                "Still waiting for model %r (check %d / 200); run: ollama pull %s",
+                OLLAMA_MODEL,
+                attempt,
+                OLLAMA_MODEL,
+            )
+        time.sleep(3)
+    else:
+        raise RuntimeError(
+            f"Ollama model {OLLAMA_MODEL!r} not available at {show_url}. "
+            f"Pull it with: ollama pull {OLLAMA_MODEL}"
+        )
+
+    yield
 
 
 @tool
@@ -75,6 +142,7 @@ class CalculatorState:
 
     messages: Annotated[list[AnyMessage], add_messages] = field(default_factory=list)
     llm_calls: int = 0
+    triage_label: str = ""
 
 
 def build_mixed_graph(model_with_tools, tools_by_name: dict, local_llm):
@@ -88,8 +156,10 @@ def build_mixed_graph(model_with_tools, tools_by_name: dict, local_llm):
                 user,
             ]
         )
+        # Do not append triage as an AIMessage: Bedrock Mantle rejects requests whose last
+        # message is from the assistant (chat-template / add_generation_prompt rules).
         return {
-            "messages": [r],
+            "triage_label": (r.content or "").strip(),
             "llm_calls": state.llm_calls + 1,
         }
 
@@ -180,6 +250,8 @@ def _run_calculator(client: OrlaClient) -> None:
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
     if not _env("OPENAI_API_KEY", ""):
         raise SystemExit(
             "OPENAI_API_KEY must be set in the environment before `orla serve` starts "
@@ -187,14 +259,17 @@ def main() -> None:
         )
 
     try:
-        with orla_runtime(quiet=True) as client:
-            _run_calculator(client)
+        with ollama_readiness_wait():
+            with orla_runtime(quiet=True) as client:
+                _run_calculator(client)
     except OrlaBinaryNotFoundError as exc:
         raise SystemExit(
             f"{exc}\n"
             "Install Orla, put `orla` on PATH, or set ORLA_BIN to the binary path."
         ) from exc
     except OrlaError as exc:
+        raise SystemExit(str(exc)) from exc
+    except RuntimeError as exc:
         raise SystemExit(str(exc)) from exc
 
 

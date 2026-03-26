@@ -28,7 +28,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/harvard-cns/orla"
-Documentation = "https://orlaserver.github.io/#/docs/pyorla"
+Documentation = "https://orlaserver.github.io/#/docs/quickstart"
 Repository = "https://github.com/harvard-cns/orla"
 Issues = "https://github.com/harvard-cns/orla/issues"
 

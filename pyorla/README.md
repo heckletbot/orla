@@ -16,7 +16,7 @@ Or with uv:
 uv add pyorla
 ```
 
-The SDK talks to a running `orla serve` daemon over HTTP. Install the Orla binary separately (see the [docs](https://orlaserver.github.io/#/docs/getting-started) for Homebrew, the install script, or Docker).
+The SDK talks to a running `orla serve` daemon over HTTP. Install the Orla binary separately (see the [Quickstart](https://orlaserver.github.io/#/docs/quickstart) for Homebrew, pyorla, and related setup).
 
 ### Developing pyorla
 
