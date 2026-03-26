@@ -95,7 +95,7 @@ def tool_call_from_raw(raw: dict[str, Any]) -> ToolCall:
         {"id": "...", "method": "tools/call", "params": {"name": "...", "arguments": {...}}}
     """
     call_id = raw.get("id", "")
-    params = raw.get("params", raw.get("McpCallToolParams", {}))
+    params = raw.get("McpCallToolParams", raw.get("params", {}))
     name = params.get("name", raw.get("name", ""))
     arguments = params.get("arguments", raw.get("arguments", {}))
     if isinstance(arguments, str):

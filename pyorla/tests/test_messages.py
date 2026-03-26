@@ -2,7 +2,12 @@
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from pyorla.messages import langchain_to_orla, orla_response_to_ai_message, orla_to_langchain
+from pyorla.messages import (
+    _lc_tool_call_to_orla_wire,
+    langchain_to_orla,
+    orla_response_to_ai_message,
+    orla_to_langchain,
+)
 from pyorla.types import InferenceResponse, InferenceResponseMetrics, Message
 
 
@@ -29,7 +34,20 @@ def test_langchain_to_orla_tool_calls():
     assert orla_msgs[0].role == "assistant"
     assert len(orla_msgs[0].tool_calls) == 1
     tc = orla_msgs[0].tool_calls[0]
-    assert tc["params"]["name"] == "search"
+    assert tc["McpCallToolParams"]["name"] == "search"
+    assert tc["McpCallToolParams"]["arguments"] == {"q": "hello"}
+
+
+def test_lc_tool_call_to_orla_wire_openai_function_shape():
+    """API payloads sometimes use function.name / function.arguments (JSON string)."""
+    tc = {
+        "id": "call_abc",
+        "type": "function",
+        "function": {"name": "add", "arguments": '{"a":3,"b":4}'},
+    }
+    out = _lc_tool_call_to_orla_wire(tc)
+    assert out["McpCallToolParams"]["name"] == "add"
+    assert out["McpCallToolParams"]["arguments"] == {"a": 3, "b": 4}
 
 
 def test_langchain_to_orla_tool_message():

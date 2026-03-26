@@ -160,6 +160,20 @@ class OrlaClient:
 # ======================================================================
 
 
+def _error_message_from_response(r: httpx.Response) -> str:
+    """Build a user-facing message; include JSON ``error`` when present (e.g. /api/v1/execute)."""
+    base = f"HTTP {r.status_code} {r.reason_phrase}"
+    try:
+        data = r.json()
+        if isinstance(data, dict):
+            err = data.get("error")
+            if isinstance(err, str) and err.strip():
+                return f"{base}: {err.strip()}"
+    except Exception:
+        pass
+    return base
+
+
 def _raise_http(resp: httpx.Response) -> None:
     try:
         resp.raise_for_status()
@@ -173,8 +187,9 @@ def _raise_http(resp: httpx.Response) -> None:
                 rid = data.get("request_id") or data.get("requestId")
         except Exception:
             pass
+        msg = _error_message_from_response(r)
         raise OrlaError(
-            f"HTTP {r.status_code} {r.reason_phrase}",
+            msg,
             status_code=r.status_code,
             body=text or None,
             request_id=rid if isinstance(rid, str) else None,
@@ -194,8 +209,9 @@ async def _araise_http(resp: httpx.Response) -> None:
                 rid = data.get("request_id") or data.get("requestId")
         except Exception:
             pass
+        msg = _error_message_from_response(r)
         raise OrlaError(
-            f"HTTP {r.status_code} {r.reason_phrase}",
+            msg,
             status_code=r.status_code,
             body=text or None,
             request_id=rid if isinstance(rid, str) else None,

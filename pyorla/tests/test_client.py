@@ -30,6 +30,17 @@ def test_raise_http_maps_status() -> None:
     assert "bad gateway" in (err.body or "")
 
 
+def test_raise_http_includes_json_error_field() -> None:
+    req = httpx.Request("POST", "http://test/api/v1/execute")
+    payload = '{"success":false,"error":"inference failed: model not found"}'
+    resp = httpx.Response(500, request=req, text=payload)
+    with pytest.raises(OrlaError) as exc_info:
+        _raise_http(resp)
+    err = exc_info.value
+    assert err.status_code == 500
+    assert "model not found" in str(err)
+
+
 def test_orla_error_message_str() -> None:
     e = OrlaError("x", status_code=418)
     assert str(e) == "x"

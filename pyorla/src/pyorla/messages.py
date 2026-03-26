@@ -22,6 +22,52 @@ from pyorla.types import InferenceResponse, Message
 # ======================================================================
 
 
+def _tool_call_args_from_lc(tc: dict[str, Any]) -> Any:
+    """Normalize LangChain / OpenAI tool call payloads to argument object for Orla."""
+    if "args" in tc:
+        return tc["args"]
+    if "arguments" in tc:
+        a = tc["arguments"]
+        if isinstance(a, str):
+            try:
+                return json.loads(a) if a.strip() else {}
+            except json.JSONDecodeError:
+                return {}
+        return a if a is not None else {}
+    fn = tc.get("function")
+    if isinstance(fn, dict):
+        raw = fn.get("arguments", "{}")
+        if isinstance(raw, str):
+            try:
+                return json.loads(raw) if raw.strip() else {}
+            except json.JSONDecodeError:
+                return {}
+        return raw if raw is not None else {}
+    return {}
+
+
+def _tool_call_name_from_lc(tc: dict[str, Any]) -> str:
+    if tc.get("name"):
+        return str(tc["name"])
+    fn = tc.get("function")
+    if isinstance(fn, dict) and fn.get("name"):
+        return str(fn["name"])
+    return ""
+
+
+def _lc_tool_call_to_orla_wire(tc: dict[str, Any]) -> dict[str, Any]:
+    """Build tool_calls[] entry matching Go's ``ToolCallWithID`` JSON (``McpCallToolParams``)."""
+    name = _tool_call_name_from_lc(tc)
+    args = _tool_call_args_from_lc(tc)
+    return {
+        "id": str(tc.get("id", "")),
+        "McpCallToolParams": {
+            "name": name,
+            "arguments": args if args is not None else {},
+        },
+    }
+
+
 def langchain_to_orla(msgs: Sequence[BaseMessage]) -> list[Message]:
     """Convert a list of LangChain messages to Orla Messages."""
     return [_lc_msg_to_orla(m) for m in msgs]
@@ -38,14 +84,7 @@ def _lc_msg_to_orla(msg: BaseMessage) -> Message:
         orla_msg = Message(role="assistant", content=str(msg.content))
         if msg.tool_calls:
             orla_msg.tool_calls = [
-                {
-                    "id": tc["id"],
-                    "method": "tools/call",
-                    "params": {
-                        "name": tc["name"],
-                        "arguments": tc["args"],
-                    },
-                }
+                _lc_tool_call_to_orla_wire(tc if isinstance(tc, dict) else dict(tc))
                 for tc in msg.tool_calls
             ]
         return orla_msg
@@ -95,7 +134,7 @@ def orla_response_to_ai_message(resp: InferenceResponse) -> AIMessage:
 def _parse_raw_tool_call(raw: dict[str, Any]) -> dict[str, Any] | None:
     """Parse a raw tool call into LangChain tool_call format."""
     call_id = raw.get("id", "")
-    params = raw.get("params", raw.get("McpCallToolParams", {}))
+    params = raw.get("McpCallToolParams", raw.get("params", {}))
     name = params.get("name", raw.get("name", ""))
     arguments = params.get("arguments", raw.get("arguments", {}))
     if isinstance(arguments, str):

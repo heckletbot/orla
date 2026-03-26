@@ -19,6 +19,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
+    "docker>=7.1.0",
     "httpx>=0.28.1",
     "langchain-core>=1.2.20",
     "langgraph>=1.1.3",
