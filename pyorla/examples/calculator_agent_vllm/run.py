@@ -20,12 +20,13 @@ Run from the ``pyorla`` directory::
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import docker
 import httpx
@@ -51,8 +52,27 @@ from pyorla import (
     orla_runtime,
 )
 
+log = logging.getLogger(__name__)
+
 DOCKER_IMAGE = "orla-calc-vllm:dev"
 _VLLM_HEALTH = "http://127.0.0.1:8000/health"
+
+
+def _drain_image_build(log_iter: Iterator[dict[str, Any]]) -> None:
+    """Consume Docker ``images.build`` JSON stream and log progress; raise on error chunks."""
+    for chunk in log_iter:
+        if err := chunk.get("errorDetail"):
+            raise RuntimeError(err.get("message", str(chunk)))
+        if stream := chunk.get("stream"):
+            line = stream.rstrip()
+            if line:
+                log.info("%s", line)
+        if status := chunk.get("status"):
+            extra = chunk.get("progress") or chunk.get("id")
+            if extra:
+                log.info("%s %s", status, extra)
+            else:
+                log.info("%s", status)
 
 
 @contextlib.contextmanager
@@ -62,36 +82,47 @@ def vllm_docker_runtime() -> Iterator[None]:
     if not (root / "Dockerfile").is_file():
         raise RuntimeError(f"No Dockerfile in {root}")
 
+    log.info("Building Docker image %s from %s ...", DOCKER_IMAGE, root)
     client = docker.from_env()
     _, log_iter = client.images.build(
         path=str(root), dockerfile="Dockerfile", tag=DOCKER_IMAGE, rm=True
     )
-    list(log_iter)
+    _drain_image_build(log_iter)
+    log.info("Docker image %s ready.", DOCKER_IMAGE)
 
+    cname = f"orla-calc-vllm-{os.getpid()}"
+    log.info("Starting container %s (GPU, port 8000 -> host 8000) ...", cname)
     container = client.containers.run(
         DOCKER_IMAGE,
         detach=True,
         remove=True,
-        name=f"orla-calc-vllm-{os.getpid()}",
+        name=cname,
         ports={"8000/tcp": 8000},
         device_requests=[DeviceRequest(count=-1, capabilities=[["gpu"]])],
     )
+    log.info("Container %s is up (id %s).", cname, container.short_id)
     try:
-        for _ in range(200):
+        log.info("Waiting for vLLM health at %s ...", _VLLM_HEALTH)
+        for attempt in range(1, 201):
             try:
                 if httpx.get(_VLLM_HEALTH, timeout=5).status_code == 200:
+                    log.info("vLLM reported healthy after %d check(s).", attempt)
                     break
             except httpx.HTTPError:
                 pass
+            if attempt % 10 == 0:
+                log.info("Still waiting for vLLM (check %d / 200) ...", attempt)
             time.sleep(3)
         else:
             raise RuntimeError(f"vLLM did not become healthy at {_VLLM_HEALTH}")
         yield
     finally:
+        log.info("Stopping container %s ...", cname)
         try:
             container.stop(timeout=60)
         except APIError:
             pass
+        log.info("Container stopped.")
 
 
 @tool
@@ -191,6 +222,7 @@ def _run_calculator(client: OrlaClient) -> None:
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
         with vllm_docker_runtime():
             with orla_runtime(quiet=True) as client:
