@@ -12,8 +12,9 @@ Prerequisites:
 
 The image serves ``Qwen/Qwen3-4B-Instruct-2507`` on port 8000, matching the ``Dockerfile`` ``CMD``.
 
-Run from the ``pyorla`` directory::
+Install example dependencies (Docker SDK), then run from the ``pyorla`` directory::
 
+    uv sync --group examples
     uv run python examples/calculator_agent_vllm/run.py
 """
 
