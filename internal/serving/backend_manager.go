@@ -48,8 +48,8 @@ func (m *LLMBackendManager) AddLLMBackend(name string, backend *core.LLMBackend,
 	m.backends[name] = &backendEntry{
 		backend:        backend,
 		modelID:        modelID,
-		maxConcurrency: backend.MaxConcurrency,
-		queueCapacity:  backend.QueueCapacity,
+		maxConcurrency: backend.EffectiveMaxConcurrency(),
+		queueCapacity:  backend.EffectiveQueueCapacity(),
 	}
 	delete(m.providers, name)
 	if exec, ok := m.executors[name]; ok {
@@ -63,6 +63,36 @@ func (m *LLMBackendManager) AddLLMBackend(name string, backend *core.LLMBackend,
 		m.memoryManager.RegisterCacheController(name, cc)
 		zap.L().Debug("Registered SGLang cache controller for backend", zap.String("backend", name))
 	}
+}
+
+// BackendUpdate holds the optional fields that can be live-updated on a registered backend.
+// Nil fields are left unchanged.
+type BackendUpdate struct {
+	CostModel      *core.CostModel `json:"cost_model,omitempty"`
+	Quality        *float64        `json:"quality,omitempty"`
+	MaxConcurrency *int            `json:"max_concurrency,omitempty"`
+}
+
+// UpdateBackend applies a partial update to an existing backend's mutable fields.
+// Returns an error if the backend is not registered.
+func (m *LLMBackendManager) UpdateBackend(name string, update BackendUpdate) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, ok := m.backends[name]
+	if !ok {
+		return fmt.Errorf("backend %q not found", name)
+	}
+	if update.CostModel != nil {
+		entry.backend.CostModel = update.CostModel
+	}
+	if update.Quality != nil {
+		entry.backend.Quality = update.Quality
+	}
+	if update.MaxConcurrency != nil {
+		entry.backend.MaxConcurrency = update.MaxConcurrency
+		entry.maxConcurrency = entry.backend.EffectiveMaxConcurrency()
+	}
+	return nil
 }
 
 // GetModelID returns the modelID string for a registered backend, or "" if not found.
@@ -226,35 +256,68 @@ func (m *LLMBackendManager) GetHealthStatus(ctx context.Context, backendName str
 	return HealthStatusHealthy, nil
 }
 
+type backendCandidate struct {
+	name string
+	cm   *core.CostModel
+}
+
+// sortBackendCandidates sorts backend candidates by output cost, then input cost, then name.
+// The intuition is that we want to pick the cheapest backend that is still good enough for the accuracy threshold.
+// Typically, output costs are much higher than input costs, so we want to prioritize them.
+// If all else is equal, we want to pick the backend with the lowest name lexicographically to have a deterministic result.
+func sortBackendCandidates(c []backendCandidate) {
+	sort.Slice(c, func(i, j int) bool {
+		if c[i].cm.OutputCostPerMToken != c[j].cm.OutputCostPerMToken {
+			return c[i].cm.OutputCostPerMToken < c[j].cm.OutputCostPerMToken
+		}
+		if c[i].cm.InputCostPerMToken != c[j].cm.InputCostPerMToken {
+			return c[i].cm.InputCostPerMToken < c[j].cm.InputCostPerMToken
+		}
+		return c[i].name < c[j].name
+	})
+}
+
 // SelectBackendByAccuracy returns the cheapest registered backend whose Quality >= accuracy
-// and that has a CostModel set. Ties are broken by ascending output cost, then input cost.
-func (m *LLMBackendManager) SelectBackendByAccuracy(accuracy float64) (string, error) {
+// and that has a CostModel set. Ties are broken by ascending output cost, then input cost,
+// then backend name.
+//
+// The policy parameter controls fallback behavior when no backend meets the threshold:
+//   - "strict": return an error.
+//   - "prefer" (or empty, the default): fall back to the cheapest costed backend,
+//     or defaultBackend if no backends have cost models.
+func (m *LLMBackendManager) SelectBackendByAccuracy(accuracy float64, policy string, defaultBackend string) (string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	type candidate struct {
-		name string
-		cm   *core.CostModel
-	}
-	var candidates []candidate
+	var qualified, costed []backendCandidate
 	for name, entry := range m.backends {
 		b := entry.backend
-		if b.CostModel == nil || b.Quality < accuracy {
+		if b.CostModel == nil {
 			continue
 		}
-		candidates = append(candidates, candidate{name: name, cm: b.CostModel})
+		costed = append(costed, backendCandidate{name: name, cm: b.CostModel})
+		if b.Quality != nil && *b.Quality >= accuracy {
+			qualified = append(qualified, backendCandidate{name: name, cm: b.CostModel})
+		}
 	}
-	if len(candidates) == 0 {
+
+	if len(qualified) > 0 {
+		sortBackendCandidates(qualified)
+		return qualified[0].name, nil
+	}
+
+	if policy == model.AccuracyPolicyStrict {
 		return "", fmt.Errorf("no backend with quality >= %v and a cost model; registered backends: %s",
 			accuracy, m.describeBackendsLocked())
 	}
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].cm.OutputCostPerMToken != candidates[j].cm.OutputCostPerMToken {
-			return candidates[i].cm.OutputCostPerMToken < candidates[j].cm.OutputCostPerMToken
-		}
-		return candidates[i].cm.InputCostPerMToken < candidates[j].cm.InputCostPerMToken
-	})
-	return candidates[0].name, nil
+
+	// "prefer" fallback: cheapest backend with a cost model, regardless of quality.
+	// If no backends have cost models, return the default backend.
+	if len(costed) == 0 {
+		return defaultBackend, nil
+	}
+	sortBackendCandidates(costed)
+	return costed[0].name, nil
 }
 
 // describeBackendsLocked returns a human-readable summary of registered backends.
@@ -265,9 +328,12 @@ func (m *LLMBackendManager) describeBackendsLocked() string {
 	}
 	parts := make([]string, 0, len(m.backends))
 	for name, entry := range m.backends {
-		q := entry.backend.Quality
 		hasCost := entry.backend.CostModel != nil
-		parts = append(parts, fmt.Sprintf("%s(quality=%.2f, has_cost=%v)", name, q, hasCost))
+		qStr := "unscored"
+		if entry.backend.Quality != nil {
+			qStr = fmt.Sprintf("%.2f", *entry.backend.Quality)
+		}
+		parts = append(parts, fmt.Sprintf("%s(quality=%s, has_cost=%v)", name, qStr, hasCost))
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, ", ")

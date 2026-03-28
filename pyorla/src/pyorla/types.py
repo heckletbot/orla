@@ -98,6 +98,7 @@ class ExecuteRequest:
     cache_hints: CacheHints | None = None
     reasoning_effort: str = ""
     accuracy: float | None = None
+    accuracy_policy: str = ""
 
     def to_dict(self) -> dict:
         """Serialize to JSON-compatible dict, omitting None/empty values."""
@@ -148,6 +149,8 @@ class ExecuteRequest:
             d["reasoning_effort"] = self.reasoning_effort
         if self.accuracy is not None:
             d["accuracy"] = self.accuracy
+        if self.accuracy_policy:
+            d["accuracy_policy"] = self.accuracy_policy
         return d
 
 
@@ -208,6 +211,10 @@ REQUEST_SCHEDULING_POLICY_PRIORITY = "priority"
 CACHE_POLICY_PRESERVE = "preserve"
 CACHE_POLICY_FLUSH = "flush"
 CACHE_POLICY_AUTO = "auto"
+
+# Accuracy policy constants
+ACCURACY_POLICY_PREFER = "prefer"
+ACCURACY_POLICY_STRICT = "strict"
 
 # Execution mode constants
 EXECUTION_MODE_SINGLE_SHOT = "single_shot"

@@ -15,8 +15,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const defaultBackendQueueCapacity = 4096
-
 type scheduledRequest struct {
 	ctx       context.Context
 	backend   string
@@ -59,20 +57,12 @@ type backendExecutor struct {
 }
 
 func newBackendExecutor(backendName string, manager *LLMBackendManager, maxConcurrency, queueCapacity int, mm *memory.DefaultManager) *backendExecutor {
-	if maxConcurrency < 1 {
-		zap.L().Warn("max concurrency is less than 1, setting to 1", zap.String("backend", backendName), zap.Int("max_concurrency", maxConcurrency))
-		maxConcurrency = 1
-	}
-	capacity := queueCapacity
-	if capacity <= 0 {
-		capacity = defaultBackendQueueCapacity
-	}
 	exec := &backendExecutor{
 		backendName:    backendName,
 		manager:        manager,
 		memoryManager:  mm,
 		maxConcurrency: maxConcurrency,
-		capacity:       capacity,
+		capacity:       queueCapacity,
 		stageQueues:    make(map[string][]*scheduledRequest),
 	}
 	exec.cond = sync.NewCond(&exec.mu)
@@ -207,6 +197,10 @@ func (e *backendExecutor) worker() {
 				zap.L().Warn("cost estimation failed", zap.String("backend", req.backend), zap.Error(err))
 			}
 			response.Metrics.EstimatedCostUSD = estCost
+			if estCost != nil {
+				metrics.EstimatedCostTotal.WithLabelValues(req.backend).Add(*estCost)
+				metrics.EstimatedCostPerRequest.WithLabelValues(req.backend).Observe(*estCost)
+			}
 		}
 
 		// For streaming requests, proxy the channel through a wrapper so we
@@ -257,6 +251,10 @@ func (e *backendExecutor) worker() {
 				zap.L().Warn("cost estimation failed", zap.String("backend", req.backend), zap.Error(costErr))
 			}
 			response.Metrics.EstimatedCostUSD = estCost
+			if estCost != nil {
+				metrics.EstimatedCostTotal.WithLabelValues(req.backend).Add(*estCost)
+				metrics.EstimatedCostPerRequest.WithLabelValues(req.backend).Observe(*estCost)
+			}
 			if e.memoryManager != nil && req.workflowID != "" {
 				e.memoryManager.ClearInflight(req.backend, requestID)
 				e.memoryManager.OnTransition(req.ctx, memory.StageTransition{

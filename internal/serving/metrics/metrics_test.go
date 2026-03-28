@@ -13,4 +13,7 @@ func TestPrometheusMetricsInitialized(t *testing.T) {
 	require.NotNil(t, QueueWaitSeconds, "QueueWaitSeconds should be initialized")
 	require.NotNil(t, BackendLatencySeconds, "BackendLatencySeconds should be initialized")
 	require.NotNil(t, QueueDepth, "QueueDepth should be initialized")
+	require.NotNil(t, EstimatedCostTotal, "EstimatedCostTotal should be initialized")
+	require.NotNil(t, EstimatedCostPerRequest, "EstimatedCostPerRequest should be initialized")
+	require.NotNil(t, AccuracyRoutingTotal, "AccuracyRoutingTotal should be initialized")
 }

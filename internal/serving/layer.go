@@ -81,8 +81,19 @@ func (l *AgenticLayer) ListLLMBackends() []string {
 }
 
 // SelectBackendByAccuracy picks the cheapest backend whose Quality >= accuracy.
-func (l *AgenticLayer) SelectBackendByAccuracy(accuracy float64) (string, error) {
-	return l.llmBackendManager.SelectBackendByAccuracy(accuracy)
+// Policy controls fallback behavior (see AccuracyPolicyPrefer, AccuracyPolicyStrict).
+func (l *AgenticLayer) SelectBackendByAccuracy(accuracy float64, policy string, defaultBackend string) (string, error) {
+	return l.llmBackendManager.SelectBackendByAccuracy(accuracy, policy, defaultBackend)
+}
+
+// UpdateBackend applies a partial update to a registered backend.
+func (l *AgenticLayer) UpdateBackend(name string, update BackendUpdate) error {
+	return l.llmBackendManager.UpdateBackend(name, update)
+}
+
+// GetCostModel returns the CostModel for a registered backend, or nil if not found or unset.
+func (l *AgenticLayer) GetCostModel(backendName string) *core.CostModel {
+	return l.llmBackendManager.GetCostModel(backendName)
 }
 
 // NotifyWorkflowComplete emits TransitionWorkflowComplete signals for each

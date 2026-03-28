@@ -49,8 +49,42 @@ var (
 		},
 		[]string{"backend"},
 	)
+
+	// EstimatedCostTotal is the cumulative estimated USD spend per backend.
+	EstimatedCostTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "estimated_cost_usd_total",
+			Help:      "Cumulative estimated cost in USD per backend",
+		},
+		[]string{"backend"},
+	)
+
+	// EstimatedCostPerRequest is the per-request estimated cost distribution.
+	EstimatedCostPerRequest = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Name:      "estimated_cost_usd",
+			Help:      "Per-request estimated cost in USD",
+			Buckets:   []float64{0.0001, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10},
+		},
+		[]string{"backend"},
+	)
+
+	// AccuracyRoutingTotal counts accuracy-based routing attempts.
+	AccuracyRoutingTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "accuracy_routing_total",
+			Help:      "Total accuracy-based routing attempts by selected backend and status",
+		},
+		[]string{"selected_backend", "status"},
+	)
 )
 
 func init() {
-	prometheus.MustRegister(RequestsTotal, QueueWaitSeconds, BackendLatencySeconds, QueueDepth)
+	prometheus.MustRegister(
+		RequestsTotal, QueueWaitSeconds, BackendLatencySeconds, QueueDepth,
+		EstimatedCostTotal, EstimatedCostPerRequest, AccuracyRoutingTotal,
+	)
 }

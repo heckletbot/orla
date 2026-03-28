@@ -1,4 +1,9 @@
-// Package orla provides a public Go client library for Orla server
+// Package orla provides a basic public Go client library for Orla server.
+//
+// This client is frozen at its current feature set. New features (cost-based
+// routing, accuracy, fallback policies, budget enforcement) are added to the
+// HTTP API and the pyorla Python client only. Go consumers needing new features
+// should use the HTTP API directly.
 package orla
 
 import (

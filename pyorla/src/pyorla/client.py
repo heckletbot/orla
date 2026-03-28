@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from pyorla.types import (
+    CostModel,
     ExecuteRequest,
     InferenceResponse,
     InferenceResponseMetrics,
@@ -86,6 +87,53 @@ class OrlaClient:
         data = resp.json()
         if not data.get("success"):
             raise OrlaError(f"register backend failed: {data.get('error', 'unknown')}")
+
+    # ------------------------------------------------------------------
+    # Update backend
+    # ------------------------------------------------------------------
+
+    def update_backend(
+        self,
+        name: str,
+        *,
+        cost_model: CostModel | None = None,
+        quality: float | None = None,
+        max_concurrency: int | None = None,
+    ) -> None:
+        """Live-update a registered backend's mutable fields."""
+        payload: dict[str, Any] = {}
+        if cost_model is not None:
+            payload["cost_model"] = {
+                "input_cost_per_mtoken": cost_model.input_cost_per_mtoken,
+                "output_cost_per_mtoken": cost_model.output_cost_per_mtoken,
+            }
+        if quality is not None:
+            payload["quality"] = quality
+        if max_concurrency is not None:
+            payload["max_concurrency"] = max_concurrency
+        resp = self._sync.patch(f"/api/v1/backends/{name}", json=payload)
+        _raise_http(resp)
+
+    async def aupdate_backend(
+        self,
+        name: str,
+        *,
+        cost_model: CostModel | None = None,
+        quality: float | None = None,
+        max_concurrency: int | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {}
+        if cost_model is not None:
+            payload["cost_model"] = {
+                "input_cost_per_mtoken": cost_model.input_cost_per_mtoken,
+                "output_cost_per_mtoken": cost_model.output_cost_per_mtoken,
+            }
+        if quality is not None:
+            payload["quality"] = quality
+        if max_concurrency is not None:
+            payload["max_concurrency"] = max_concurrency
+        resp = await self._async.patch(f"/api/v1/backends/{name}", json=payload)
+        await _araise_http(resp)
 
     # ------------------------------------------------------------------
     # Execute (non-streaming)

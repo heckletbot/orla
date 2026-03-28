@@ -45,6 +45,8 @@ from pyorla.tools import (
     tool_runner_from_schema,
 )
 from pyorla.types import (
+    ACCURACY_POLICY_PREFER,
+    ACCURACY_POLICY_STRICT,
     CACHE_POLICY_AUTO,
     CACHE_POLICY_FLUSH,
     CACHE_POLICY_PRESERVE,
@@ -132,4 +134,6 @@ __all__ = [
     "CACHE_POLICY_AUTO",
     "EXECUTION_MODE_SINGLE_SHOT",
     "EXECUTION_MODE_AGENT_LOOP",
+    "ACCURACY_POLICY_PREFER",
+    "ACCURACY_POLICY_STRICT",
 ]

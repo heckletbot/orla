@@ -85,6 +85,41 @@ paths:
             schema:
               $ref: "#/components/schemas/RegisterBackendRequest"
 
+  /api/v1/backends/{name}:
+    patch:
+      summary: Update backend
+      description: >
+        Live-update mutable fields on a registered backend. Only supplied fields
+        are changed; omitted fields are left as-is.
+      operationId: updateBackend
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the registered backend
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateBackendRequest"
+      responses:
+        "200":
+          description: Backend updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        "400":
+          description: Validation error
+        "404":
+          description: Backend not found
+
   /api/v1/workflow/complete:
     post:
       summary: Notify workflow complete
@@ -186,6 +221,14 @@ components:
           description: >
             Requests cost-optimized backend selection. When set, the daemon picks
             the cheapest backend whose quality >= this value.
+        accuracy_policy:
+          type: string
+          enum: [prefer, strict]
+          default: prefer
+          description: >
+            Controls fallback when no backend meets the accuracy threshold.
+            "prefer" (default) falls back to the cheapest costed backend;
+            "strict" fails the request.
 
     Message:
       type: object
@@ -341,6 +384,23 @@ components:
           type: array
           items:
             type: string
+
+    UpdateBackendRequest:
+      type: object
+      description: Partial update for a registered backend. Only supplied fields are changed.
+      properties:
+        cost_model:
+          $ref: "#/components/schemas/CostModel"
+        quality:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: Updated quality score
+        max_concurrency:
+          type: integer
+          minimum: 1
+          description: Updated max concurrency
 
     WorkflowCompleteRequest:
       type: object

@@ -37,9 +37,26 @@ type Manager interface {
 
 // DefaultManagerConfig configures the DefaultManager.
 type DefaultManagerConfig struct {
-	PreserveThreshold int
-	PressureThreshold float64
-	PressurePollMs    int
+	PreserveThreshold *int
+	PressureThreshold *float64
+}
+
+const defaultPressureThreshold = 0.85
+
+// EffectivePreserveThreshold returns the configured threshold or defaultPreserveThresholdTokens (256).
+func (c DefaultManagerConfig) EffectivePreserveThreshold() int {
+	if c.PreserveThreshold == nil || *c.PreserveThreshold <= 0 {
+		return defaultPreserveThresholdTokens
+	}
+	return *c.PreserveThreshold
+}
+
+// EffectivePressureThreshold returns the configured threshold or 0.85.
+func (c DefaultManagerConfig) EffectivePressureThreshold() float64 {
+	if c.PressureThreshold == nil || *c.PressureThreshold <= 0 {
+		return defaultPressureThreshold
+	}
+	return *c.PressureThreshold
 }
 
 // DefaultManager is the default Memory Manager implementation. It composes
@@ -55,15 +72,9 @@ type DefaultManager struct {
 
 // NewDefaultManager creates a new DefaultManager with the standard policy chain.
 func NewDefaultManager(cfg DefaultManagerConfig) *DefaultManager {
-	if cfg.PreserveThreshold <= 0 {
-		cfg.PreserveThreshold = defaultPreserveThresholdTokens
-	}
-	if cfg.PressureThreshold <= 0 {
-		cfg.PressureThreshold = 0.85
-	}
-	pressurePolicy := NewFlushUnderPressurePolicy(cfg.PressureThreshold)
+	pressurePolicy := NewFlushUnderPressurePolicy(cfg.EffectivePressureThreshold())
 	chain := NewPolicyChain(
-		NewPreserveOnSmallIncrementPolicy(cfg.PreserveThreshold),
+		NewPreserveOnSmallIncrementPolicy(cfg.EffectivePreserveThreshold()),
 		NewFlushAtBoundaryPolicy(),
 	)
 	return &DefaultManager{

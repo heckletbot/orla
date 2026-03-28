@@ -69,6 +69,24 @@ def test_orla_response_to_ai_message():
     assert ai.response_metadata["prompt_tokens"] == 10
 
 
+def test_orla_response_to_ai_message_includes_cost():
+    resp = InferenceResponse(
+        content="ok",
+        metrics=InferenceResponseMetrics(prompt_tokens=100, completion_tokens=50, estimated_cost_usd=0.005),
+    )
+    ai = orla_response_to_ai_message(resp)
+    assert ai.response_metadata["estimated_cost_usd"] == 0.005
+
+
+def test_orla_response_to_ai_message_omits_null_cost():
+    resp = InferenceResponse(
+        content="ok",
+        metrics=InferenceResponseMetrics(prompt_tokens=100, completion_tokens=50),
+    )
+    ai = orla_response_to_ai_message(resp)
+    assert "estimated_cost_usd" not in ai.response_metadata
+
+
 def test_orla_response_to_ai_message_with_tool_calls():
     resp = InferenceResponse(
         content="",

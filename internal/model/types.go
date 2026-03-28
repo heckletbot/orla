@@ -118,14 +118,14 @@ type Response struct {
 // StructuredOutputOptions requests the model to return content conforming to a JSON Schema.
 type StructuredOutputOptions struct {
 	Name   string          `json:"name"`             // Required by OpenAI for json_schema response_format
-	Strict bool            `json:"strict,omitempty"` // If true, response is guaranteed to conform to schema (default true when used)
+	Strict bool            `json:"strict,omitempty"` // If true, response is guaranteed to conform to the schema
 	Schema json.RawMessage `json:"schema"`           // JSON Schema object. The schema must be valid when set
 }
 
 // InferenceOptions holds per-request inference settings (agent profile knobs).
 // JSON tags match the execute API so the server can embed this in ExecuteRequest.
 type InferenceOptions struct {
-	// Stream is whether to stream the response. A nil value means no streaming.
+	// Stream enables streaming (SSE) for the response. false means non-streaming.
 	Stream bool `json:"stream,omitempty"`
 	// MaxTokens is the maximum number of tokens to generate. A nil value means use the backend default.
 	MaxTokens *int `json:"max_tokens,omitempty"`
@@ -148,7 +148,16 @@ type InferenceOptions struct {
 	// Accuracy requests cost-optimized backend selection. When set to a value in [0.0, 1.0],
 	// the daemon picks the cheapest backend whose Quality >= this value.
 	Accuracy *float64 `json:"accuracy,omitempty"`
+	// AccuracyPolicy controls fallback when no backend meets the Accuracy threshold.
+	// "prefer" (default): fall back to the cheapest backend with a cost model.
+	// "strict": fail the request if no backend qualifies.
+	AccuracyPolicy string `json:"accuracy_policy,omitempty"`
 }
+
+const (
+	AccuracyPolicyPrefer = "prefer"
+	AccuracyPolicyStrict = "strict"
+)
 
 // GetSchedulingPolicy returns the configured scheduling policy or the FCFS default.
 func (o InferenceOptions) GetSchedulingPolicy() SchedulingPolicy {

@@ -90,6 +90,7 @@ class Stage:
 
         self.stream: bool = False
         self.accuracy: float | None = None
+        self.accuracy_policy: str = ""
 
         self._workflow_id: str = ""
 
@@ -146,6 +147,9 @@ class Stage:
     def set_accuracy(self, score: float) -> None:
         self.accuracy = score
 
+    def set_accuracy_policy(self, policy: str) -> None:
+        self.accuracy_policy = policy
+
     def set_workflow_id(self, wf_id: str) -> None:
         self._workflow_id = wf_id
 
@@ -183,6 +187,7 @@ class Stage:
         req.cache_hints = self.cache_hints
         req.workflow_id = self._workflow_id
         req.accuracy = self.accuracy
+        req.accuracy_policy = self.accuracy_policy
 
         if self.tools:
             req.tools = [t.to_mcp() for t in self.tools.values()]

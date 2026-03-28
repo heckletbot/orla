@@ -11,7 +11,7 @@ import (
 	"github.com/harvard-cns/orla/internal/core"
 	"github.com/harvard-cns/orla/internal/model"
 	"github.com/harvard-cns/orla/internal/serving"
-	_ "github.com/harvard-cns/orla/internal/serving/metrics" // register Prometheus metrics
+	"github.com/harvard-cns/orla/internal/serving/metrics"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
@@ -108,6 +108,7 @@ func (s *AgenticServer) registerRoutes(rateLimitRPS int) {
 	s.mux.Handle("POST /api/v1/backends", backendsHandler)
 
 	s.mux.HandleFunc("GET /api/v1/backends", s.handleListBackends)
+	s.mux.HandleFunc("PATCH /api/v1/backends/{name}", s.handleUpdateBackend)
 	s.mux.HandleFunc("POST /api/v1/workflow/complete", s.handleWorkflowComplete)
 }
 
@@ -171,16 +172,31 @@ func (s *AgenticServer) handleExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.AccuracyPolicy != "" && req.AccuracyPolicy != model.AccuracyPolicyPrefer && req.AccuracyPolicy != model.AccuracyPolicyStrict {
+		http.Error(w, fmt.Sprintf("accuracy_policy must be \"prefer\" or \"strict\"; got %q", req.AccuracyPolicy), http.StatusBadRequest)
+		return
+	}
+
 	if req.Accuracy != nil {
 		a := *req.Accuracy
-		if a < 0 || a > 1 {
+		if !(a >= 0 && a <= 1) {
 			http.Error(w, fmt.Sprintf("accuracy must be in [0.0, 1.0]; got %v", a), http.StatusBadRequest)
 			return
 		}
-		selected, err := s.layer.SelectBackendByAccuracy(a)
+		policy := req.AccuracyPolicy
+		if policy == "" {
+			policy = model.AccuracyPolicyPrefer
+		}
+		selected, err := s.layer.SelectBackendByAccuracy(a, policy, req.Backend)
 		if err != nil {
+			metrics.AccuracyRoutingTotal.WithLabelValues("", "no_match").Inc()
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		if selected != req.Backend {
+			metrics.AccuracyRoutingTotal.WithLabelValues(selected, "ok").Inc()
+		} else {
+			metrics.AccuracyRoutingTotal.WithLabelValues(selected, "fallback").Inc()
 		}
 		req.Backend = selected
 	}
@@ -301,8 +317,8 @@ type RegisterBackendRequest struct {
 	Type           string            `json:"type"`                      // "openai" or "sglang"
 	ModelID        string            `json:"model_id"`                  // full model identifier e.g. "openai:Qwen/Qwen3-4B-Instruct-2507", "openai:llama3"
 	APIKeyEnvVar   string            `json:"api_key_env_var,omitempty"` // optional env var name for API key (for openai-type backends)
-	MaxConcurrency int               `json:"max_concurrency,omitempty"` // max concurrent requests to this backend (default 1)
-	QueueCapacity  int               `json:"queue_capacity,omitempty"`  // max queued requests; 0 = default (4096)
+	MaxConcurrency *int              `json:"max_concurrency,omitempty"` // max concurrent requests (nil = default 1)
+	QueueCapacity  *int              `json:"queue_capacity,omitempty"`  // max queued requests (nil = default 4096)
 	CostModel      *CostModelRequest `json:"cost_model,omitempty"`      // optional token pricing
 	Quality        *float64          `json:"quality,omitempty"`         // relative capability score in [0.0, 1.0]
 }
@@ -352,13 +368,18 @@ func (s *AgenticServer) handleRegisterBackend(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if req.Quality != nil && (*req.Quality < 0 || *req.Quality > 1) {
-		http.Error(w, fmt.Sprintf("quality must be in [0.0, 1.0]; got %v", *req.Quality), http.StatusBadRequest)
-		return
+	if req.Quality != nil {
+		if q := *req.Quality; !(q >= 0 && q <= 1) {
+			http.Error(w, fmt.Sprintf("quality must be in [0.0, 1.0]; got %v", q), http.StatusBadRequest)
+			return
+		}
 	}
-	if req.CostModel != nil && (req.CostModel.InputCostPerMToken < 0 || req.CostModel.OutputCostPerMToken < 0) {
-		http.Error(w, "cost_model rates must be non-negative", http.StatusBadRequest)
-		return
+	if req.CostModel != nil {
+		in, out := req.CostModel.InputCostPerMToken, req.CostModel.OutputCostPerMToken
+		if !core.IsFinite(in) || !core.IsFinite(out) || in < 0 || out < 0 {
+			http.Error(w, "cost_model rates must be finite non-negative numbers", http.StatusBadRequest)
+			return
+		}
 	}
 
 	backend := &core.LLMBackend{
@@ -367,6 +388,7 @@ func (s *AgenticServer) handleRegisterBackend(w http.ResponseWriter, r *http.Req
 		APIKeyEnvVar:   req.APIKeyEnvVar,
 		MaxConcurrency: req.MaxConcurrency,
 		QueueCapacity:  req.QueueCapacity,
+		Quality:        req.Quality,
 	}
 	if req.CostModel != nil {
 		backend.CostModel = &core.CostModel{
@@ -374,22 +396,67 @@ func (s *AgenticServer) handleRegisterBackend(w http.ResponseWriter, r *http.Req
 			OutputCostPerMToken: req.CostModel.OutputCostPerMToken,
 		}
 	}
-	if req.Quality != nil {
-		backend.Quality = *req.Quality
-	}
 	s.layer.AddLLMBackend(req.Name, backend, req.ModelID)
 
 	zap.L().Info("Registered LLM backend",
 		zap.String("name", req.Name),
 		zap.String("endpoint", req.Endpoint),
 		zap.String("model_id", req.ModelID),
-		zap.Int("max_concurrency", req.MaxConcurrency),
-		zap.Int("queue_capacity", req.QueueCapacity),
-		zap.Float64("quality", backend.Quality))
+		zap.Int("max_concurrency", backend.EffectiveMaxConcurrency()),
+		zap.Int("queue_capacity", backend.EffectiveQueueCapacity()),
+		zap.Float64p("quality", backend.Quality))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	core.WriteJSONResponse(w, RegisterBackendResponse{Success: true})
+}
+
+func (s *AgenticServer) handleUpdateBackend(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "backend name is required in URL path", http.StatusBadRequest)
+		return
+	}
+
+	body := http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	var update serving.BackendUpdate
+	if err := json.NewDecoder(body).Decode(&update); err != nil {
+		http.Error(w, fmt.Sprintf("failed to decode request: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if update.Quality != nil {
+		if q := *update.Quality; !(q >= 0 && q <= 1) {
+			http.Error(w, fmt.Sprintf("quality must be in [0.0, 1.0]; got %v", q), http.StatusBadRequest)
+			return
+		}
+	}
+	if update.CostModel != nil {
+		in, out := update.CostModel.InputCostPerMToken, update.CostModel.OutputCostPerMToken
+		if !core.IsFinite(in) || !core.IsFinite(out) || in < 0 || out < 0 {
+			http.Error(w, "cost_model rates must be finite non-negative numbers", http.StatusBadRequest)
+			return
+		}
+	}
+	if update.MaxConcurrency != nil && *update.MaxConcurrency < 1 {
+		http.Error(w, "max_concurrency must be >= 1", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.layer.UpdateBackend(name, update); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	zap.L().Info("Updated backend",
+		zap.String("name", name),
+		zap.Bool("cost_model_changed", update.CostModel != nil),
+		zap.Bool("quality_changed", update.Quality != nil),
+		zap.Bool("max_concurrency_changed", update.MaxConcurrency != nil))
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	core.WriteJSONResponse(w, map[string]bool{"success": true})
 }
 
 // ListBackendsResponse is the response body for list backends.

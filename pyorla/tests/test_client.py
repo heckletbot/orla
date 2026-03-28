@@ -73,3 +73,85 @@ def test_parse_execute_response_metrics_dict() -> None:
         prompt_tokens=3,
         completion_tokens=1,
     )
+
+
+def test_parse_execute_response_estimated_cost_usd() -> None:
+    data = {
+        "success": True,
+        "response": {
+            "content": "ok",
+            "metrics": {"prompt_tokens": 100, "completion_tokens": 50, "estimated_cost_usd": 0.0012},
+        },
+    }
+    r = _parse_execute_response(data)
+    assert r.metrics is not None
+    assert r.metrics.estimated_cost_usd == 0.0012
+
+
+def test_parse_execute_response_estimated_cost_null() -> None:
+    data = {
+        "success": True,
+        "response": {
+            "content": "ok",
+            "metrics": {"prompt_tokens": 100, "completion_tokens": 50},
+        },
+    }
+    r = _parse_execute_response(data)
+    assert r.metrics is not None
+    assert r.metrics.estimated_cost_usd is None
+
+
+def test_backend_to_dict_cost_model_and_quality() -> None:
+    from pyorla.client import _backend_to_dict
+    from pyorla.types import CostModel, LLMBackend
+
+    b = LLMBackend(
+        name="test", endpoint="http://x", type="openai", model_id="openai:m",
+        cost_model=CostModel(input_cost_per_mtoken=0.25, output_cost_per_mtoken=1.25),
+        quality=0.8,
+    )
+    d = _backend_to_dict(b)
+    assert d["cost_model"] == {"input_cost_per_mtoken": 0.25, "output_cost_per_mtoken": 1.25}
+    assert d["quality"] == 0.8
+
+
+def test_backend_to_dict_no_cost_model() -> None:
+    from pyorla.client import _backend_to_dict
+    from pyorla.types import LLMBackend
+
+    b = LLMBackend(name="test", endpoint="http://x", type="openai", model_id="openai:m")
+    d = _backend_to_dict(b)
+    assert "cost_model" not in d
+    assert "quality" not in d
+
+
+def test_execute_request_to_dict_accuracy() -> None:
+    from pyorla.types import ExecuteRequest
+
+    req = ExecuteRequest(backend="b", prompt="hi", accuracy=0.7)
+    d = req.to_dict()
+    assert d["accuracy"] == 0.7
+
+
+def test_execute_request_to_dict_no_accuracy() -> None:
+    from pyorla.types import ExecuteRequest
+
+    req = ExecuteRequest(backend="b", prompt="hi")
+    d = req.to_dict()
+    assert "accuracy" not in d
+
+
+def test_execute_request_to_dict_accuracy_policy() -> None:
+    from pyorla.types import ExecuteRequest
+
+    req = ExecuteRequest(backend="b", prompt="hi", accuracy=0.7, accuracy_policy="strict")
+    d = req.to_dict()
+    assert d["accuracy_policy"] == "strict"
+
+
+def test_execute_request_to_dict_no_accuracy_policy() -> None:
+    from pyorla.types import ExecuteRequest
+
+    req = ExecuteRequest(backend="b", prompt="hi", accuracy=0.7)
+    d = req.to_dict()
+    assert "accuracy_policy" not in d

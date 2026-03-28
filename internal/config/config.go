@@ -157,5 +157,27 @@ func validateConfig(cfg *OrlaConfig) error {
 		return fmt.Errorf("output_format must be one of: %s, got '%s'", core.JoinMapKeys(validOutputFormats), cfg.OutputFormat)
 	}
 
+	if err := validateLLMBackend(cfg.LLMBackend); err != nil {
+		return fmt.Errorf("llm_backend: %w", err)
+	}
+
+	return nil
+}
+
+func validateLLMBackend(b *core.LLMBackend) error {
+	if b == nil {
+		return nil
+	}
+	if b.Quality != nil {
+		if q := *b.Quality; !(q >= 0 && q <= 1) {
+			return fmt.Errorf("quality must be in [0.0, 1.0]; got %v", q)
+		}
+	}
+	if b.CostModel != nil {
+		in, out := b.CostModel.InputCostPerMToken, b.CostModel.OutputCostPerMToken
+		if !core.IsFinite(in) || !core.IsFinite(out) || in < 0 || out < 0 {
+			return fmt.Errorf("cost_model rates must be finite non-negative numbers; got input=%v, output=%v", in, out)
+		}
+	}
 	return nil
 }

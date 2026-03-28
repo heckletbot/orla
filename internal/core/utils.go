@@ -4,12 +4,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"math"
 	"net/http"
 	"slices"
 	"strings"
 
 	"go.uber.org/zap"
 )
+
+// IsFinite reports whether f is neither NaN nor +-Inf.
+// Go's math package has IsNaN and IsInf but no IsFinite.
+func IsFinite(f float64) bool {
+	return !math.IsNaN(f) && !math.IsInf(f, 0)
+}
 
 // Ptr returns a pointer to v. Useful for converting literals to pointers in struct initializers.
 func Ptr[T any](v T) *T { return &v }

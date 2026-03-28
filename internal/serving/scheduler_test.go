@@ -218,7 +218,7 @@ func TestBackendExecutor_ConcurrencyRespected(t *testing.T) {
 	manager := NewLLMBackendManager(nil)
 	manager.AddLLMBackend("b", &core.LLMBackend{
 		Type: core.LLMInferenceAPITypeOpenAI, Endpoint: "http://localhost:11434/v1",
-		MaxConcurrency: concurrency,
+		MaxConcurrency: core.Ptr(concurrency),
 	}, "openai:m")
 
 	dp := &delayProvider{delay: 100 * time.Millisecond}
@@ -243,16 +243,27 @@ func TestBackendExecutor_ConcurrencyRespected(t *testing.T) {
 	assert.Greater(t, dp.maxSeen.Load(), int32(1), "should utilize multiple workers")
 }
 
-func TestNewBackendExecutor_ClampsZeroToOne(t *testing.T) {
-	manager := NewLLMBackendManager(nil)
-	exec := newBackendExecutor("test", manager, 0, 0, nil)
-	defer exec.close()
-	assert.Equal(t, 1, exec.maxConcurrency)
+func TestEffectiveMaxConcurrency_NilDefaultsToOne(t *testing.T) {
+	b := &core.LLMBackend{}
+	assert.Equal(t, 1, b.EffectiveMaxConcurrency())
 }
 
-func TestNewBackendExecutor_ClampsNegativeToOne(t *testing.T) {
-	manager := NewLLMBackendManager(nil)
-	exec := newBackendExecutor("test", manager, -5, 0, nil)
-	defer exec.close()
-	assert.Equal(t, 1, exec.maxConcurrency)
+func TestEffectiveMaxConcurrency_ZeroDefaultsToOne(t *testing.T) {
+	b := &core.LLMBackend{MaxConcurrency: core.Ptr(0)}
+	assert.Equal(t, 1, b.EffectiveMaxConcurrency())
+}
+
+func TestEffectiveMaxConcurrency_NegativeDefaultsToOne(t *testing.T) {
+	b := &core.LLMBackend{MaxConcurrency: core.Ptr(-5)}
+	assert.Equal(t, 1, b.EffectiveMaxConcurrency())
+}
+
+func TestEffectiveQueueCapacity_NilDefaultsToConstant(t *testing.T) {
+	b := &core.LLMBackend{}
+	assert.Equal(t, core.DefaultBackendQueueCapacity, b.EffectiveQueueCapacity())
+}
+
+func TestEffectiveQueueCapacity_ZeroDefaultsToConstant(t *testing.T) {
+	b := &core.LLMBackend{QueueCapacity: core.Ptr(0)}
+	assert.Equal(t, core.DefaultBackendQueueCapacity, b.EffectiveQueueCapacity())
 }

@@ -20,7 +20,7 @@ internal/
   serving/memory/  Memory manager and cache control
   testing/         Shared test utilities
   tui/             Terminal UI (Charm Bubbletea)
-pkg/api/           Public Go client library (includes MCP tool types)
+pkg/api/           Public Go client library (frozen — see Client API Policy below)
 examples/          Example applications and demos
 deploy/            Docker Compose configs for backends
 scripts/           Install/uninstall scripts
@@ -207,6 +207,7 @@ The `orla serve` daemon exposes an HTTP API for inference and backend management
 | `/api/v1/execute` | POST | Run inference (streaming or non-streaming) |
 | `/api/v1/backends` | GET | List registered backends |
 | `/api/v1/backends` | POST | Register an LLM backend |
+| `/api/v1/backends/{name}` | PATCH | Live-update backend cost_model, quality, or max_concurrency |
 | `/api/v1/workflow/complete` | POST | Notify workflow completion for memory tracking |
 | `/metrics` | GET | Prometheus metrics |
 
@@ -220,8 +221,14 @@ The daemon includes production hardening:
 - **Panic recovery**: Handlers are wrapped; panics are logged and return 500.
 - **HTTP timeouts**: ReadTimeout, ReadHeaderTimeout, WriteTimeout (30 min for inference), IdleTimeout, MaxHeaderBytes.
 - **Graceful shutdown**: On server error or SIGTERM/SIGINT, the daemon calls `Shutdown` before exiting.
-- **Prometheus metrics**: `orla_requests_total`, `orla_queue_wait_seconds`, `orla_backend_latency_seconds`, `orla_queue_depth` at `GET /metrics`.
+- **Prometheus metrics**: `orla_requests_total`, `orla_queue_wait_seconds`, `orla_backend_latency_seconds`, `orla_queue_depth`, `orla_estimated_cost_usd_total`, `orla_estimated_cost_usd`, `orla_accuracy_routing_total` at `GET /metrics`.
 - **Retry with backoff**: Provider calls retry on 5xx, 429, and network errors (up to 3 attempts, exponential backoff).
 - **Rate limiting**: Optional `rate_limit_rps` in config limits execute and backends endpoints; 0 disables.
 
 Config options for `orla serve` (in `OrlaConfig`): `listen_address`, `rate_limit_rps`, `log_format`, `log_level`.
+
+## Client API Policy
+
+- **`pkg/api/` (Go client)**: Frozen at its current feature set. Supports register, execute, streaming, and workflows. New features (cost-based routing, accuracy, fallback policies) are **not** added here. The existing Go examples (`swe_bench_lite`, `dag_math_eval`, etc.) continue to use it.
+- **`pyorla/` (Python client)**: The full-featured client. All new features target the HTTP API and pyorla first.
+- **HTTP API**: The source of truth. Go consumers needing new features should use the HTTP API directly.

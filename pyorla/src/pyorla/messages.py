@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.messages import (
     AIMessage,
@@ -55,12 +55,24 @@ def _tool_call_name_from_lc(tc: dict[str, Any]) -> str:
     return ""
 
 
-def _lc_tool_call_to_orla_wire(tc: dict[str, Any]) -> dict[str, Any]:
-    """Build tool_calls[] entry matching Go's ``ToolCallWithID`` JSON (``McpCallToolParams``)."""
-    name = _tool_call_name_from_lc(tc)
-    args = _tool_call_args_from_lc(tc)
+def _lc_tool_call_to_orla_wire(tc: Any) -> dict[str, Any]:
+    """Build tool_calls[] entry matching Go's ``ToolCallWithID`` JSON (``McpCallToolParams``).
+
+    Accepts ``dict`` wire format or LangChain ``ToolCall`` / Pydantic objects; normalizes to a dict first.
+    """
+    if isinstance(tc, dict):
+        d: dict[str, Any] = cast(dict[str, Any], tc)
+    else:
+        model_dump = getattr(tc, "model_dump", None)
+        if callable(model_dump):
+            raw = model_dump()
+            d = cast(dict[str, Any], raw) if isinstance(raw, dict) else {}
+        else:
+            d = cast(dict[str, Any], dict(cast(Any, tc)))
+    name = _tool_call_name_from_lc(d)
+    args = _tool_call_args_from_lc(d)
     return {
-        "id": str(tc.get("id", "")),
+        "id": str(d.get("id", "")),
         "McpCallToolParams": {
             "name": name,
             "arguments": args if args is not None else {},
@@ -83,10 +95,7 @@ def _lc_msg_to_orla(msg: BaseMessage) -> Message:
     if isinstance(msg, AIMessage):
         orla_msg = Message(role="assistant", content=str(msg.content))
         if msg.tool_calls:
-            orla_msg.tool_calls = [
-                _lc_tool_call_to_orla_wire(tc if isinstance(tc, dict) else dict(tc))
-                for tc in msg.tool_calls
-            ]
+            orla_msg.tool_calls = [_lc_tool_call_to_orla_wire(tc) for tc in msg.tool_calls]
         return orla_msg
 
     if isinstance(msg, ToolMessage):
@@ -126,6 +135,8 @@ def orla_response_to_ai_message(resp: InferenceResponse) -> AIMessage:
             meta["tpot_ms"] = resp.metrics.tpot_ms
         if resp.metrics.backend_latency_ms is not None:
             meta["backend_latency_ms"] = resp.metrics.backend_latency_ms
+        if resp.metrics.estimated_cost_usd is not None:
+            meta["estimated_cost_usd"] = resp.metrics.estimated_cost_usd
         kwargs["response_metadata"] = meta
 
     return AIMessage(

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/harvard-cns/orla/internal/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -246,7 +247,7 @@ func TestDefaultManager_StageOverrideFlush(t *testing.T) {
 }
 
 func TestDefaultManager_PolicyChainDecides(t *testing.T) {
-	mm := NewDefaultManager(DefaultManagerConfig{PreserveThreshold: 256})
+	mm := NewDefaultManager(DefaultManagerConfig{PreserveThreshold: core.Ptr(256)})
 	mm.RegisterWorkflow("wf1")
 
 	mm.OnTransition(context.Background(), StageTransition{
@@ -278,7 +279,7 @@ func TestDefaultManager_WorkflowCompleteFlushes(t *testing.T) {
 }
 
 func TestDefaultManager_MemoryPressure(t *testing.T) {
-	mm := NewDefaultManager(DefaultManagerConfig{PressureThreshold: 0.80})
+	mm := NewDefaultManager(DefaultManagerConfig{PressureThreshold: core.Ptr(0.80)})
 	mm.RegisterWorkflow("wf1")
 
 	mm.OnTransition(context.Background(), StageTransition{

@@ -286,7 +286,7 @@ func TestServer_HandleExecute_AccuracyRouting(t *testing.T) {
 	layer.AddLLMBackend("expensive", &core.LLMBackend{
 		Type:     core.LLMInferenceAPITypeOpenAI,
 		Endpoint: srv.URL() + "/v1",
-		Quality:  0.9,
+		Quality:  core.Ptr(0.9),
 		CostModel: &core.CostModel{
 			InputCostPerMToken:  5.0,
 			OutputCostPerMToken: 20.0,
@@ -296,7 +296,7 @@ func TestServer_HandleExecute_AccuracyRouting(t *testing.T) {
 	layer.AddLLMBackend("cheap", &core.LLMBackend{
 		Type:     core.LLMInferenceAPITypeOpenAI,
 		Endpoint: srv.URL() + "/v1",
-		Quality:  0.5,
+		Quality:  core.Ptr(0.5),
 		CostModel: &core.CostModel{
 			InputCostPerMToken:  0.1,
 			OutputCostPerMToken: 0.5,
@@ -325,12 +325,12 @@ func TestServer_HandleExecute_AccuracyRouting(t *testing.T) {
 	assert.Equal(t, "routed", result.Response.Content)
 }
 
-func TestServer_HandleExecute_AccuracyNoneQualify(t *testing.T) {
+func TestServer_HandleExecute_AccuracyNoneQualify_Strict(t *testing.T) {
 	layer := serving.NewAgenticLayer()
 	layer.AddLLMBackend("weak", &core.LLMBackend{
 		Type:     core.LLMInferenceAPITypeOpenAI,
 		Endpoint: "http://x",
-		Quality:  0.3,
+		Quality:  core.Ptr(0.3),
 		CostModel: &core.CostModel{
 			InputCostPerMToken:  0.1,
 			OutputCostPerMToken: 0.5,
@@ -344,7 +344,8 @@ func TestServer_HandleExecute_AccuracyNoneQualify(t *testing.T) {
 		Backend: "weak",
 		Prompt:  "hi",
 		InferenceOptions: model.InferenceOptions{
-			Accuracy: &accuracy,
+			Accuracy:       &accuracy,
+			AccuracyPolicy: model.AccuracyPolicyStrict,
 		},
 	}
 	body, err := json.Marshal(reqBody)
@@ -354,6 +355,28 @@ func TestServer_HandleExecute_AccuracyNoneQualify(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, resp.Code)
 	assert.Contains(t, resp.Body.String(), "no backend with quality")
+}
+
+func TestServer_HandleExecute_AccuracyPolicyInvalid(t *testing.T) {
+	layer := serving.NewAgenticLayer()
+	server := NewAgenticServer(layer, ":0", nil)
+
+	accuracy := 0.5
+	reqBody := ExecuteRequest{
+		Backend: "b",
+		Prompt:  "hi",
+		InferenceOptions: model.InferenceOptions{
+			Accuracy:       &accuracy,
+			AccuracyPolicy: "bogus",
+		},
+	}
+	body, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+	resp := httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("POST", "/api/v1/execute", bytes.NewReader(body)))
+
+	require.Equal(t, http.StatusBadRequest, resp.Code)
+	assert.Contains(t, resp.Body.String(), "accuracy_policy must be")
 }
 
 func TestServer_HandleExecute_AccuracyOutOfRange(t *testing.T) {
@@ -375,4 +398,70 @@ func TestServer_HandleExecute_AccuracyOutOfRange(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, resp.Code)
 	assert.Contains(t, resp.Body.String(), "accuracy must be in [0.0, 1.0]")
+}
+
+func TestServer_HandleUpdateBackend_Success(t *testing.T) {
+	layer := serving.NewAgenticLayer()
+	layer.AddLLMBackend("test-be", &core.LLMBackend{
+		Type:     core.LLMInferenceAPITypeOpenAI,
+		Endpoint: "http://x",
+		Quality:  core.Ptr(0.5),
+	}, "openai:m")
+
+	server := NewAgenticServer(layer, ":0", nil)
+
+	quality := 0.9
+	update := serving.BackendUpdate{
+		Quality: &quality,
+		CostModel: &core.CostModel{
+			InputCostPerMToken:  2.0,
+			OutputCostPerMToken: 10.0,
+		},
+	}
+	body, err := json.Marshal(update)
+	require.NoError(t, err)
+	resp := httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("PATCH", "/api/v1/backends/test-be", bytes.NewReader(body)))
+
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	cm := layer.GetCostModel("test-be")
+	require.NotNil(t, cm)
+	assert.Equal(t, 2.0, cm.InputCostPerMToken)
+	assert.Equal(t, 10.0, cm.OutputCostPerMToken)
+}
+
+func TestServer_HandleUpdateBackend_NotFound(t *testing.T) {
+	layer := serving.NewAgenticLayer()
+	server := NewAgenticServer(layer, ":0", nil)
+
+	quality := 0.5
+	update := serving.BackendUpdate{Quality: &quality}
+	body, err := json.Marshal(update)
+	require.NoError(t, err)
+	resp := httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("PATCH", "/api/v1/backends/nonexistent", bytes.NewReader(body)))
+
+	require.Equal(t, http.StatusNotFound, resp.Code)
+	assert.Contains(t, resp.Body.String(), "not found")
+}
+
+func TestServer_HandleUpdateBackend_InvalidQuality(t *testing.T) {
+	layer := serving.NewAgenticLayer()
+	layer.AddLLMBackend("be", &core.LLMBackend{
+		Type:     core.LLMInferenceAPITypeOpenAI,
+		Endpoint: "http://x",
+	}, "openai:m")
+
+	server := NewAgenticServer(layer, ":0", nil)
+
+	quality := 1.5
+	update := serving.BackendUpdate{Quality: &quality}
+	body, err := json.Marshal(update)
+	require.NoError(t, err)
+	resp := httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("PATCH", "/api/v1/backends/be", bytes.NewReader(body)))
+
+	require.Equal(t, http.StatusBadRequest, resp.Code)
+	assert.Contains(t, resp.Body.String(), "quality must be")
 }
