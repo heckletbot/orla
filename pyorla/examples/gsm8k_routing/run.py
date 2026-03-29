@@ -41,11 +41,20 @@ Run from the ``pyorla`` directory::
     uv run python examples/gsm8k_routing/run.py --mode routed --limit 20
     uv run python examples/gsm8k_routing/run.py --mode baseline --limit 20
     uv run python examples/gsm8k_routing/run.py --mode all-cheap --limit 20
+
+Use ``--limit 0`` to evaluate the entire split from ``--start`` (standard full
+test set: ``--split test --start 0 --limit 0``).
+
+Per-example metrics are written to ``results.csv`` by default (override with
+``--output-csv``; empty value disables).  Columns include ``cost_usd``,
+``triage_cost_usd``, ``solve_cost_usd``, ``correct``, ``routing_accuracy``, and
+``difficulty`` for plotting.
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import os
 import re
 from dataclasses import dataclass, field
@@ -100,11 +109,14 @@ DEFAULT_ACCURACY = 0.85
 def _env(key: str, default: str) -> str:
     return os.environ.get(key, default).strip()
 
+BASELINE_ACCURACY = 0.90
 
 # ---------------------------------------------------------------------------
 # GSM8K dataset helpers
 # ---------------------------------------------------------------------------
 
+# After ``extract_answer`` captures a substring (its regexes allow ``$`` and ``,``),
+# we strip those here so gold and prediction compare as plain integers/strings.
 _NORMALIZE_RE = re.compile(r"[$,]")
 
 
@@ -141,6 +153,9 @@ def load_gsm8k(
 ) -> tuple[list[tuple[str, str]], str]:
     """Load items and build the few-shot prefix from train.
 
+    *limit* is the number of examples after *start*, or ``0`` meaning through
+    the end of the split.
+
     Returns ``(items, fewshot_prefix)`` where each item is ``(question, gold)``.
     """
     train_ds = load_dataset("gsm8k", "main", split="train")
@@ -150,7 +165,10 @@ def load_gsm8k(
     n = len(ds)
     if start < 0 or start >= n:
         raise SystemExit(f"--start {start} out of range for split {split!r} (len={n})")
-    end = min(start + limit, n)
+    if limit == 0:
+        end = n
+    else:
+        end = min(start + limit, n)
     items = [(ds[i]["question"], _gsm8k_gold(ds[i]["answer"])) for i in range(start, end)]
     return items, fewshot_prefix
 
@@ -180,6 +198,28 @@ def _extract_cost(msg: AIMessage) -> float:
     """Read Orla's ``estimated_cost_usd`` from LangChain response_metadata."""
     meta = getattr(msg, "response_metadata", None) or {}
     return float(meta.get("estimated_cost_usd", 0.0) or 0.0)
+
+
+def _accuracy_for_log(out: dict[str, Any], mode: str) -> float | None:
+    """Accuracy floor used for routing (state may omit it for non-routed modes)."""
+    v = out.get("required_accuracy")
+    if v is not None:
+        return float(v)
+    if mode == "baseline":
+        return BASELINE_ACCURACY
+    if mode == "all-cheap":
+        return 0.0
+    return None
+
+
+def _triage_solve_costs(out: dict[str, Any], mode: str) -> tuple[float, float]:
+    """Split Orla estimated cost between triage and solve ``AIMessage``s."""
+    ai_msgs = [m for m in out["messages"] if isinstance(m, AIMessage)]
+    if mode == "routed" and len(ai_msgs) >= 2:
+        return _extract_cost(ai_msgs[0]), _extract_cost(ai_msgs[-1])
+    if ai_msgs:
+        return 0.0, _extract_cost(ai_msgs[-1])
+    return 0.0, 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -229,11 +269,11 @@ def build_graph(
         ])
         label = str(reply.content).strip().lower().rstrip(".")
         acc = DIFFICULTY_TO_ACCURACY.get(label, DEFAULT_ACCURACY)
-        return {"required_accuracy": acc, "difficulty": label}
+        return {"messages": [reply], "required_accuracy": acc, "difficulty": label}
 
     def solve_node(state: GSMState) -> dict[str, Any]:
         if mode == "baseline":
-            solve_stage.set_accuracy(0.95)
+            solve_stage.set_accuracy(BASELINE_ACCURACY)
         elif mode == "all-cheap":
             solve_stage.set_accuracy(0.0)
         else:
@@ -323,8 +363,15 @@ def run_benchmark(
     fewshot_prefix: str,
     *,
     mode: str,
+    split: str,
+    start: int,
+    output_csv: str | None,
 ) -> None:
-    """Run the LangGraph agent on each (question, gold_answer) pair and score."""
+    """Run the LangGraph agent on each (question, gold_answer) pair and score.
+
+    If *output_csv* is set, write one UTF-8 CSV row per example (columns suit
+    cost vs accuracy plots). Use an empty ``--output-csv`` argument to skip.
+    """
     cheap_be, triage_be = _register_backends(client)
 
     solve_stage = Stage("gsm8k-solve", cheap_be)
@@ -351,37 +398,82 @@ def run_benchmark(
     total_cost_usd = 0.0
     difficulty_counts: dict[str, int] = {"easy": 0, "medium": 0, "hard": 0, "unknown": 0}
 
-    for idx, (question, gold) in enumerate(items):
-        print(f"\n{'=' * 60}")
-        print(f"[{idx + 1}/{total}]  gold={gold}")
-        print(f"{'=' * 60}")
-        print(question.strip())
+    csv_file = None
+    csv_writer: csv.DictWriter | None = None
+    if output_csv:
+        csv_file = open(output_csv, "w", newline="", encoding="utf-8")
+        fieldnames = (
+            "split",
+            "dataset_index",
+            "run_index",
+            "mode",
+            "gold",
+            "predicted",
+            "correct",
+            "routing_accuracy",
+            "difficulty",
+            "triage_cost_usd",
+            "solve_cost_usd",
+            "cost_usd",
+            "question",
+        )
+        csv_writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        csv_writer.writeheader()
 
-        out = agent.invoke({"messages": [HumanMessage(content=question)]})
+    try:
+        for idx, (question, gold) in enumerate(items):
+            print(f"\n{'=' * 60}")
+            print(f"[{idx + 1}/{total}]  gold={gold}")
+            print(f"{'=' * 60}")
+            print(question.strip())
 
-        last_msg = out["messages"][-1]
-        reply_text = str(last_msg.content) if isinstance(last_msg, AIMessage) else str(last_msg)
-        predicted = extract_answer(reply_text)
-        match = predicted is not None and predicted == gold
+            out = agent.invoke({"messages": [HumanMessage(content=question)]})
 
-        item_cost = 0.0
-        for m in out["messages"]:
-            if isinstance(m, AIMessage):
-                item_cost += _extract_cost(m)
-        total_cost_usd += item_cost
+            last_msg = out["messages"][-1]
+            reply_text = str(last_msg.content) if isinstance(last_msg, AIMessage) else str(last_msg)
+            predicted = extract_answer(reply_text)
+            match = predicted is not None and predicted == gold
 
-        difficulty = out.get("difficulty", "")
-        if difficulty:
-            difficulty_counts[difficulty] = difficulty_counts.get(difficulty, 0) + 1
-        elif mode == "routed":
-            difficulty_counts["unknown"] += 1
+            triage_c, solve_c = _triage_solve_costs(out, mode)
+            item_cost = triage_c + solve_c
+            total_cost_usd += item_cost
 
-        status = "CORRECT" if match else "WRONG"
-        correct += match
-        acc_str = f"acc={out.get('required_accuracy', 'n/a')}"
-        diff_str = f"difficulty={difficulty}" if difficulty else ""
-        cost_str = f"cost=${item_cost:.6f}" if item_cost > 0 else ""
-        print(f"  predicted={predicted}  {status}  {acc_str}  {diff_str}  {cost_str}")
+            difficulty = out.get("difficulty", "")
+            if difficulty:
+                difficulty_counts[difficulty] = difficulty_counts.get(difficulty, 0) + 1
+            elif mode == "routed":
+                difficulty_counts["unknown"] += 1
+
+            status = "CORRECT" if match else "WRONG"
+            correct += match
+            acc_str = f"acc={out.get('required_accuracy', 'n/a')}"
+            diff_str = f"difficulty={difficulty}" if difficulty else ""
+            cost_str = f"cost=${item_cost:.6f}" if item_cost > 0 else ""
+            print(f"  predicted={predicted}  {status}  {acc_str}  {diff_str}  {cost_str}")
+
+            if csv_writer is not None:
+                acc_log = _accuracy_for_log(out, mode)
+                csv_writer.writerow(
+                    {
+                        "split": split,
+                        "dataset_index": start + idx,
+                        "run_index": idx,
+                        "mode": mode,
+                        "gold": gold,
+                        "predicted": predicted if predicted is not None else "",
+                        "correct": 1 if match else 0,
+                        "routing_accuracy": f"{acc_log:.4f}" if acc_log is not None else "",
+                        "difficulty": difficulty,
+                        "triage_cost_usd": f"{triage_c:.8f}",
+                        "solve_cost_usd": f"{solve_c:.8f}",
+                        "cost_usd": f"{item_cost:.8f}",
+                        "question": question.strip(),
+                    }
+                )
+
+    finally:
+        if csv_file is not None:
+            csv_file.close()
 
     pct = 100.0 * correct / total if total else 0.0
     avg_cost = total_cost_usd / total if total else 0.0
@@ -394,6 +486,8 @@ def run_benchmark(
     print(f"  Avg cost:   ${avg_cost:.6f} / item")
     if mode == "routed":
         print(f"  Difficulty: {dict(difficulty_counts)}")
+    if output_csv:
+        print(f"  CSV:        {output_csv}")
     print(f"{'=' * 60}")
 
 
@@ -431,12 +525,24 @@ def main() -> None:
         "--limit",
         type=int,
         default=5,
-        help="Number of consecutive examples to run (default: 5).",
+        help=(
+            "Number of consecutive examples after --start (default: 5). "
+            "Use 0 for the rest of the split (full eval: --split test --start 0 --limit 0)."
+        ),
+    )
+    parser.add_argument(
+        "--output-csv",
+        default="results.csv",
+        metavar="PATH",
+        help=(
+            "Write per-example results for plotting (UTF-8). "
+            "Default: results.csv. Use an empty string to disable."
+        ),
     )
     args = parser.parse_args()
 
-    if args.limit < 1:
-        raise SystemExit("--limit must be >= 1")
+    if args.limit < 0:
+        raise SystemExit("--limit must be >= 0 (0 means through end of split)")
     if args.start < 0:
         raise SystemExit("--start must be >= 0")
 
@@ -449,9 +555,20 @@ def main() -> None:
             "OPENAI_API_KEY must be set so `orla serve` can call the Mantle endpoint."
         )
 
+    out_csv = (args.output_csv or "").strip()
+    csv_path = out_csv if out_csv else None
+
     try:
         with orla_runtime(quiet=True) as client:
-            run_benchmark(client, items, fewshot_prefix, mode=args.mode)
+            run_benchmark(
+                client,
+                items,
+                fewshot_prefix,
+                mode=args.mode,
+                split=args.split,
+                start=args.start,
+                output_csv=csv_path,
+            )
     except OrlaBinaryNotFoundError as exc:
         raise SystemExit(
             f"{exc}\n"
