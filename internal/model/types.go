@@ -95,16 +95,26 @@ const (
 
 // SchedulingHints are optional policy-specific hints attached to an inference request.
 type SchedulingHints struct {
-	// Priority is optional and used by priority-based scheduling policies.
+	// Priority controls stage-level scheduling (which stage queue to serve next).
 	Priority *int `json:"priority,omitempty"`
+	// RequestPriority controls request-level scheduling (ordering within a stage queue).
+	RequestPriority *int `json:"request_priority,omitempty"`
 }
 
-// GetPriority returns the priority score or 0 when unset.
+// GetPriority returns the stage-level priority score or 0 when unset.
 func (h *SchedulingHints) GetPriority() int {
 	if h == nil || h.Priority == nil {
 		return 0
 	}
 	return *h.Priority
+}
+
+// GetRequestPriority returns the request-level priority score or 0 when unset.
+func (h *SchedulingHints) GetRequestPriority() int {
+	if h == nil || h.RequestPriority == nil {
+		return 0
+	}
+	return *h.RequestPriority
 }
 
 // Response represents a model response

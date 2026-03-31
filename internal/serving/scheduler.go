@@ -311,9 +311,9 @@ func selectNextRequest(queue []*scheduledRequest) int {
 		return 0
 	}
 	bestIdx := 0
-	bestPriority := head.opts.SchedulingHints.GetPriority()
+	bestPriority := head.opts.SchedulingHints.GetRequestPriority()
 	for i, req := range queue[1:] {
-		p := req.opts.SchedulingHints.GetPriority()
+		p := req.opts.SchedulingHints.GetRequestPriority()
 		if p > bestPriority || (p == bestPriority && req.enqueuedAt.Before(queue[bestIdx].enqueuedAt)) {
 			bestIdx = i + 1
 			bestPriority = p

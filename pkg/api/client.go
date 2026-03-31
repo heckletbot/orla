@@ -148,7 +148,8 @@ const (
 
 // SchedulingHints are optional server scheduling hints attached to execute requests.
 type SchedulingHints struct {
-	Priority *int `json:"priority,omitempty"`
+	Priority        *int `json:"priority,omitempty"`
+	RequestPriority *int `json:"request_priority,omitempty"`
 }
 
 // ExecuteResponse represents the response from an execute call.

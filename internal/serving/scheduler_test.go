@@ -118,14 +118,14 @@ func TestSelectNextRequest_PriorityPicksHighest(t *testing.T) {
 			enqueuedAt: now.Add(-2 * time.Second),
 			opts: model.InferenceOptions{
 				RequestSchedulingPolicy: model.RequestSchedulingPolicyPriority,
-				SchedulingHints:         &model.SchedulingHints{Priority: &low},
+				SchedulingHints:         &model.SchedulingHints{RequestPriority: &low},
 			},
 		},
 		{
 			enqueuedAt: now.Add(-1 * time.Second),
 			opts: model.InferenceOptions{
 				RequestSchedulingPolicy: model.RequestSchedulingPolicyPriority,
-				SchedulingHints:         &model.SchedulingHints{Priority: &high},
+				SchedulingHints:         &model.SchedulingHints{RequestPriority: &high},
 			},
 		},
 	}
@@ -140,14 +140,14 @@ func TestSelectNextRequest_PriorityTieBreaksByOldest(t *testing.T) {
 			enqueuedAt: now.Add(-1 * time.Second),
 			opts: model.InferenceOptions{
 				RequestSchedulingPolicy: model.RequestSchedulingPolicyPriority,
-				SchedulingHints:         &model.SchedulingHints{Priority: &same},
+				SchedulingHints:         &model.SchedulingHints{RequestPriority: &same},
 			},
 		},
 		{
 			enqueuedAt: now.Add(-3 * time.Second),
 			opts: model.InferenceOptions{
 				RequestSchedulingPolicy: model.RequestSchedulingPolicyPriority,
-				SchedulingHints:         &model.SchedulingHints{Priority: &same},
+				SchedulingHints:         &model.SchedulingHints{RequestPriority: &same},
 			},
 		},
 	}

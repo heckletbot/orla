@@ -208,6 +208,10 @@ components:
           properties:
             priority:
               type: integer
+              description: Stage-level priority (which stage queue to serve next)
+            request_priority:
+              type: integer
+              description: Request-level priority (ordering within a stage queue)
         workflow_id:
           type: string
         cache_policy:

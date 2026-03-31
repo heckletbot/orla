@@ -45,6 +45,7 @@ class SchedulingHints:
     """Optional hints for stage/request scheduling."""
 
     priority: int | None = None
+    request_priority: int | None = None
 
 
 @dataclass
@@ -131,8 +132,14 @@ class ExecuteRequest:
             d["scheduling_policy"] = self.scheduling_policy
         if self.request_scheduling_policy:
             d["request_scheduling_policy"] = self.request_scheduling_policy
-        if self.scheduling_hints is not None and self.scheduling_hints.priority is not None:
-            d["scheduling_hints"] = {"priority": self.scheduling_hints.priority}
+        if self.scheduling_hints is not None:
+            hints: dict[str, int] = {}
+            if self.scheduling_hints.priority is not None:
+                hints["priority"] = self.scheduling_hints.priority
+            if self.scheduling_hints.request_priority is not None:
+                hints["request_priority"] = self.scheduling_hints.request_priority
+            if hints:
+                d["scheduling_hints"] = hints
         if self.workflow_id:
             d["workflow_id"] = self.workflow_id
         if self.cache_policy:
