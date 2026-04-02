@@ -346,9 +346,15 @@ def build_graph(
         assert triage_stage is not None
         triage_llm = triage_stage.as_chat_model()
         problem = _user_text(state)
+        user_prompt = (
+            "Classify the following math problem as easy, medium, or hard. "
+            "Reply with ONLY that one word.\n\n"
+            f"Problem: {problem}\n\n"
+            "Difficulty:"
+        )
         reply = triage_llm.invoke([
             SystemMessage(content=TRIAGE_SYSTEM_PROMPT),
-            HumanMessage(content=problem),
+            HumanMessage(content=user_prompt),
         ])
         label = _parse_difficulty_label(str(reply.content))
         acc = DIFFICULTY_TO_ACCURACY.get(label, DEFAULT_ACCURACY)
