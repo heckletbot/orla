@@ -41,6 +41,16 @@ class LLMBackend:
 
 
 @dataclass
+class AccessPolicy:
+    """An access control policy rule."""
+
+    name: str
+    subjects: list[str]
+    resources: list[str]
+    action: str  # "allow" | "deny"
+
+
+@dataclass
 class SchedulingHints:
     """Optional hints for stage/request scheduling."""
 
@@ -100,6 +110,8 @@ class ExecuteRequest:
     reasoning_effort: str = ""
     accuracy: float | None = None
     accuracy_policy: str = ""
+    tags: dict[str, str] = field(default_factory=dict)
+    data_labels: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Serialize to JSON-compatible dict, omitting None/empty values."""
@@ -158,6 +170,10 @@ class ExecuteRequest:
             d["accuracy"] = self.accuracy
         if self.accuracy_policy:
             d["accuracy_policy"] = self.accuracy_policy
+        if self.tags:
+            d["tags"] = self.tags
+        if self.data_labels:
+            d["data_labels"] = self.data_labels
         return d
 
 
@@ -226,3 +242,7 @@ ACCURACY_POLICY_STRICT = "strict"
 # Execution mode constants
 EXECUTION_MODE_SINGLE_SHOT = "single_shot"
 EXECUTION_MODE_AGENT_LOOP = "agent_loop"
+
+# Access control action constants
+ACCESS_ACTION_ALLOW = "allow"
+ACCESS_ACTION_DENY = "deny"

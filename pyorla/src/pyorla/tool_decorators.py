@@ -9,13 +9,12 @@ from collections.abc import Callable
 from typing import Any, TypeVar, get_type_hints, overload
 
 from pydantic import BaseModel, ConfigDict, create_model
+from pyorla.tool_output import tool_output_to_values
+from pyorla.tools import Tool, ToolResult, ToolSchema
 
 
 class _OrlaToolArgsBase(BaseModel):
     model_config = ConfigDict(extra="ignore")
-
-from pyorla.tool_output import tool_output_to_values
-from pyorla.tools import Tool, ToolResult, ToolSchema
 
 F = TypeVar("F", bound=Callable[..., Any])
 

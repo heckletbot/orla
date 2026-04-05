@@ -70,3 +70,29 @@ run: ## Run the orla binary
 .PHONY: deps
 deps: ## Download Go dependencies
 	go mod download
+
+# Targets for pyorla
+
+PYORLA_DIR := pyorla
+
+.PHONY: pyorla-test
+pyorla-test: ## Run pyorla pytest suite
+	cd $(PYORLA_DIR) && uv run pytest tests/ -v
+
+.PHONY: pyorla-lint
+pyorla-lint: ## Run ruff and ty on pyorla
+	cd $(PYORLA_DIR) && uv run ruff check src/ tests/
+	cd $(PYORLA_DIR) && uv run ty check
+
+.PHONY: pyorla-format
+pyorla-format: ## Run ruff format on pyorla
+	cd $(PYORLA_DIR) && uv run ruff format src/ tests/
+	cd $(PYORLA_DIR) && uv run ruff check --fix src/ tests/
+
+# Targets for both orla and pyorla
+
+.PHONY: test-all
+test-all: test pyorla-test ## Run Go and pyorla tests
+
+.PHONY: lint-all
+lint-all: lint pyorla-lint ## Run Go and pyorla linters

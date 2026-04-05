@@ -11,6 +11,7 @@ import (
 	"github.com/harvard-cns/orla/internal/core"
 	"github.com/harvard-cns/orla/internal/model"
 	"github.com/harvard-cns/orla/internal/serving"
+	"github.com/harvard-cns/orla/internal/serving/access"
 	"github.com/harvard-cns/orla/internal/serving/metrics"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -110,6 +111,10 @@ func (s *AgenticServer) registerRoutes(rateLimitRPS int) {
 	s.mux.HandleFunc("GET /api/v1/backends", s.handleListBackends)
 	s.mux.HandleFunc("PATCH /api/v1/backends/{name}", s.handleUpdateBackend)
 	s.mux.HandleFunc("POST /api/v1/workflow/complete", s.handleWorkflowComplete)
+
+	s.mux.HandleFunc("POST /api/v1/policies", s.handleAddPolicy)
+	s.mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
+	s.mux.HandleFunc("DELETE /api/v1/policies/{name}", s.handleRemovePolicy)
 }
 
 // rateLimitMiddleware returns 429 when the limiter rejects the request.
@@ -153,8 +158,10 @@ type ExecuteRequest struct {
 	Tools    []*mcp.Tool     `json:"tools,omitempty"`
 	model.InferenceOptions
 
-	WorkflowID  string `json:"workflow_id,omitempty"`
-	CachePolicy string `json:"cache_policy,omitempty"`
+	WorkflowID  string            `json:"workflow_id,omitempty"`
+	CachePolicy string            `json:"cache_policy,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
+	DataLabels  []string          `json:"data_labels,omitempty"`
 }
 
 // ExecuteResponse is the response body for the execute endpoint.
@@ -204,6 +211,31 @@ func (s *AgenticServer) handleExecute(w http.ResponseWriter, r *http.Request) {
 	if req.Backend == "" {
 		http.Error(w, "backend is required", http.StatusBadRequest)
 		return
+	}
+
+	// Access control enforcement.
+	if len(req.Tags) > 0 {
+		// Check LLM backend access.
+		if d := s.layer.CheckBackendAccess(req.Tags, req.Backend); !d.Allowed {
+			http.Error(w, fmt.Sprintf("access denied to backend %q: %s", req.Backend, d.Reason), http.StatusForbidden)
+			return
+		}
+
+		// Check tool access.
+		if len(req.Tools) > 0 {
+			if d := s.layer.CheckToolAccess(req.Tags, req.Tools); !d.Allowed {
+				http.Error(w, fmt.Sprintf("tool access denied: %s", d.Reason), http.StatusForbidden)
+				return
+			}
+		}
+
+		// Check data label access.
+		if len(req.DataLabels) > 0 {
+			if d := s.layer.CheckDataAccess(req.Tags, req.Backend, req.DataLabels); !d.Allowed {
+				http.Error(w, fmt.Sprintf("data access denied for backend %q: %s", req.Backend, d.Reason), http.StatusForbidden)
+				return
+			}
+		}
 	}
 
 	messages := req.Messages
@@ -504,4 +536,74 @@ func (s *AgenticServer) handleWorkflowComplete(w http.ResponseWriter, r *http.Re
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	core.WriteJSONResponse(w, WorkflowCompleteResponse{Success: true})
+}
+
+// ---- Access control policy endpoints ----
+
+// AddPolicyRequest is the request body for creating an access control policy.
+type AddPolicyRequest struct {
+	Name      string   `json:"name"`
+	Subjects  []string `json:"subjects"`
+	Resources []string `json:"resources"`
+	Action    string   `json:"action"`
+}
+
+func (s *AgenticServer) handleAddPolicy(w http.ResponseWriter, r *http.Request) {
+	body := http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	var req AddPolicyRequest
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("failed to decode request: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	p := &access.Policy{
+		Name:      req.Name,
+		Subjects:  req.Subjects,
+		Resources: req.Resources,
+		Action:    access.Action(req.Action),
+	}
+	if err := s.layer.PolicyStore.Add(p); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	zap.L().Info("Added access control policy",
+		zap.String("name", p.Name),
+		zap.String("action", string(p.Action)),
+		zap.Strings("subjects", p.Subjects),
+		zap.Strings("resources", p.Resources))
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	core.WriteJSONResponse(w, map[string]bool{"success": true})
+}
+
+// ListPoliciesResponse is the response body for listing policies.
+type ListPoliciesResponse struct {
+	Policies []*access.Policy `json:"policies"`
+}
+
+func (s *AgenticServer) handleListPolicies(w http.ResponseWriter, r *http.Request) {
+	policies := s.layer.PolicyStore.List()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	core.WriteJSONResponse(w, ListPoliciesResponse{Policies: policies})
+}
+
+func (s *AgenticServer) handleRemovePolicy(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "policy name is required in URL path", http.StatusBadRequest)
+		return
+	}
+	if err := s.layer.PolicyStore.Remove(name); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	zap.L().Info("Removed access control policy", zap.String("name", name))
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	core.WriteJSONResponse(w, map[string]bool{"success": true})
 }

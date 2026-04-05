@@ -4,9 +4,11 @@ package serving
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	"github.com/harvard-cns/orla/internal/core"
 	"github.com/harvard-cns/orla/internal/model"
+	"github.com/harvard-cns/orla/internal/serving/access"
 	"github.com/harvard-cns/orla/internal/serving/memory"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.uber.org/zap"
@@ -16,14 +18,19 @@ import (
 type AgenticLayer struct {
 	llmBackendManager *LLMBackendManager
 	MemoryManager     *memory.DefaultManager
+	PolicyStore       *access.Store
+	policyEvaluator   *access.Evaluator
 }
 
 // NewAgenticLayer creates a new serving layer.
 func NewAgenticLayer() *AgenticLayer {
 	mm := memory.NewDefaultManager(memory.DefaultManagerConfig{})
+	ps := access.NewStore()
 	return &AgenticLayer{
 		llmBackendManager: NewLLMBackendManager(mm),
 		MemoryManager:     mm,
+		PolicyStore:       ps,
+		policyEvaluator:   access.NewEvaluator(ps),
 	}
 }
 
@@ -110,6 +117,38 @@ func (l *AgenticLayer) NotifyWorkflowComplete(ctx context.Context, workflowID st
 		})
 	}
 	l.MemoryManager.DeregisterWorkflow(workflowID)
+}
+
+// CheckBackendAccess checks whether the given tags permit access to the named backend.
+func (l *AgenticLayer) CheckBackendAccess(tags map[string]string, backendName string) access.Decision {
+	return l.policyEvaluator.CheckAccess(tags, access.ResourceTypeBackend, backendName)
+}
+
+// CheckToolAccess checks whether the given tags permit all requested tools.
+// Returns the first denial encountered, or an allowed decision if all tools pass.
+func (l *AgenticLayer) CheckToolAccess(tags map[string]string, tools []*mcp.Tool) access.Decision {
+	for _, t := range tools {
+		if d := l.policyEvaluator.CheckAccess(tags, access.ResourceTypeTool, t.Name); !d.Allowed {
+			return d
+		}
+	}
+	return access.Decision{Allowed: true}
+}
+
+// CheckDataAccess checks whether data with the given labels may be sent to the named backend.
+func (l *AgenticLayer) CheckDataAccess(tags map[string]string, backendName string, dataLabels []string) access.Decision {
+	for _, label := range dataLabels {
+		// For data policies, the subject is the backend receiving the data,
+		// and the resource is the data label.
+		backendTags := map[string]string{"backend": backendName}
+		// Merge request tags so policies can match on either.
+		maps.Copy(backendTags, tags)
+
+		if d := l.policyEvaluator.CheckAccess(backendTags, access.ResourceTypeData, label); !d.Allowed {
+			return d
+		}
+	}
+	return access.Decision{Allowed: true}
 }
 
 // StartPressureMonitor launches the background memory pressure polling loop.

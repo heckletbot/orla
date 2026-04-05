@@ -9,21 +9,25 @@ Orla is a high-performance agent execution engine written in Go. It runs as a da
 ## Repository Layout
 
 ```
-cmd/orla/          CLI entry points (main, serve, agent subcommands)
+cmd/orla/            CLI entry points (main, serve, agent subcommands)
 internal/
-  agent/           Agent loop and one-shot executor
-  config/          Viper-based YAML configuration
-  core/            Shared types (LLMBackend, logger, utils)
-  model/           Provider interface, OpenAI provider, mock helpers
-  serving/         AgenticLayer, scheduler, backend manager
-  serving/api/     HTTP API server and routes
-  serving/memory/  Memory manager and cache control
-  testing/         Shared test utilities
-  tui/             Terminal UI (Charm Bubbletea)
-pkg/api/           Public Go client library (frozen — see Client API Policy below)
-examples/          Example applications and demos
-deploy/            Docker Compose configs for backends
-scripts/           Install/uninstall scripts
+  agent/             Agent loop and one-shot executor
+  config/            Viper-based YAML configuration
+  core/              Shared types (LLMBackend, logger, utils)
+  model/             Provider interface, OpenAI provider, mock helpers
+  serving/           AgenticLayer, scheduler, backend manager
+  serving/access/    Access control policy store and evaluator
+  serving/api/       HTTP API server and routes
+  serving/memory/    Memory manager and cache control
+  testing/           Shared test utilities
+  tui/               Terminal UI (Charm Bubbletea)
+pkg/api/             Public Go client library (frozen — see Client API Policy below)
+pyorla/              Python SDK (pip-installable, full-featured client)
+  src/pyorla/        Package source
+  tests/             pytest test suite
+examples/            Example applications and demos
+deploy/              Docker Compose configs for backends
+scripts/             Install/uninstall scripts
 ```
 
 ## Before Completing Work
@@ -31,24 +35,31 @@ scripts/           Install/uninstall scripts
 Always run these commands before considering a task complete:
 
 ```bash
-make lint
-make test
+make lint-all
+make test-all
 ```
 
-- **`make lint`** runs `go vet` and `golangci-lint` across `./cmd/...`, `./internal/...`, `./pkg/...`, `./examples/...`.
-- **`make test`** runs the full unit test suite across those same directories.
+- **`make lint-all`** runs Go linters (`go vet` + `golangci-lint`) and pyorla linters (`ruff` + `ty`).
+- **`make test-all`** runs both Go tests and pyorla pytest.
+
+If you only changed Go code, `make lint` and `make test` are sufficient. If you only changed pyorla, `make pyorla-lint` and `make pyorla-test` are sufficient.
 
 Fix any failures before finishing. Do not leave lint errors or failing tests.
 
 Other useful targets:
 
-| Target             | Purpose                                          |
-|--------------------|--------------------------------------------------|
-| `make format`      | `go fmt` + `go mod tidy`                         |
-| `make build`       | Build binary to `bin/orla`                       |
-| `make coverage`    | Generate `coverage.html` from internal and pkg   |
-| `make test-race`        | Run tests with race detector                |
-| `make test-integration` | Integration tests                           |
+| Target | Purpose |
+|--------|---------|
+| `make lint` | Go linters only (`go vet` + `golangci-lint`) |
+| `make test` | Go tests only |
+| `make pyorla-lint` | pyorla linters only (`ruff check` + `ty check`) |
+| `make pyorla-test` | pyorla tests only (`pytest`) |
+| `make pyorla-format` | `ruff format` + `ruff check --fix` on pyorla |
+| `make format` | `go fmt` + `go mod tidy` |
+| `make build` | Build binary to `bin/orla` |
+| `make coverage` | Generate `coverage.html` from internal and pkg |
+| `make test-race` | Run Go tests with race detector |
+| `make test-integration` | Go integration tests |
 
 ## Code Style and Conventions
 
@@ -180,9 +191,9 @@ Always verify interface compliance: `var _ Provider = (*MockProvider)(nil)`.
 
 Integration tests use `MockLLMServer` for end-to-end flows without external services. They are named `TestIntegration_*` and run via `make test-integration` (or `make test` which includes them).
 
-## Linting
+## Go Linting
 
-The `.golangci.yml` enables these linters: `errcheck`, `govet`, `ineffassign`, `staticcheck`, `unused`, `errorlint`, `gosec`, `copyloopvar`, `goconst`, `misspell`.
+`make lint` runs `go vet` and `golangci-lint`. The `.golangci.yml` enables these linters: `errcheck`, `govet`, `ineffassign`, `staticcheck`, `unused`, `errorlint`, `gosec`, `copyloopvar`, `goconst`, `misspell`.
 
 Key settings:
 - `errcheck` checks type assertions and blank identifier assignments.
@@ -208,6 +219,9 @@ The `orla serve` daemon exposes an HTTP API for inference and backend management
 | `/api/v1/backends` | GET | List registered backends |
 | `/api/v1/backends` | POST | Register an LLM backend |
 | `/api/v1/backends/{name}` | PATCH | Live-update backend cost_model, quality, or max_concurrency |
+| `/api/v1/policies` | POST | Add an access control policy |
+| `/api/v1/policies` | GET | List all access control policies |
+| `/api/v1/policies/{name}` | DELETE | Remove an access control policy |
 | `/api/v1/workflow/complete` | POST | Notify workflow completion for memory tracking |
 | `/metrics` | GET | Prometheus metrics |
 
@@ -226,6 +240,64 @@ The daemon includes production hardening:
 - **Rate limiting**: Optional `rate_limit_rps` in config limits execute and backends endpoints; 0 disables.
 
 Config options for `orla serve` (in `OrlaConfig`): `listen_address`, `rate_limit_rps`, `log_format`, `log_level`.
+
+## Access Control
+
+The `serving/access` package implements a deny-overrides policy engine. Policies are installed at runtime via the HTTP API or pyorla SDK.
+
+- **Policy model**: Each policy has subjects (glob patterns matching request tags like `"tenant:interns"`), resources (glob patterns matching `"backend:gpt4o"`, `"tool:shell_*"`, or `"data:pii"`), and an action (`"allow"` or `"deny"`).
+- **Evaluation**: Deny overrides allow. If no policies match, access is allowed by default (open policy).
+- **Enforcement**: Checked in `handleExecute` before backend selection. Backends, tools, and data labels are all deny-on-match (requests are rejected with 403, not silently filtered).
+- **Subject identity**: Request tags (`map[string]string`) carried in the `tags` field of execute requests. Workflow-level tags propagate to all stages.
+
+## pyorla (Python SDK)
+
+`pyorla/` is the full-featured Python SDK. All new features target pyorla first.
+
+### Development
+
+```bash
+cd pyorla
+uv pip install -e ".[dev]"    # editable install with dev deps
+make pyorla-test               # run tests (from repo root)
+make pyorla-lint               # run ruff + ty (from repo root)
+```
+
+### Linting
+
+pyorla uses **ruff** for linting/formatting and **ty** for type checking. Both are configured in `pyorla/pyproject.toml`.
+
+- `make pyorla-lint` runs `ruff check` and `ty check`.
+- `make pyorla-format` runs `ruff format` and `ruff check --fix`.
+- Always use `uv` to run Python tools (e.g., `uv run ruff`, `uv run ty`, `uv run pytest`).
+
+### Code Style
+
+- **Dataclasses** for all wire types (`types.py`). Avoid Pydantic unless schema validation is needed.
+- **Sync + async pairs**: Every client method has a sync version and an `a`-prefixed async version (e.g., `execute` / `aexecute`).
+- **Private helpers**: Prefix with `_` and place at the bottom of the file (e.g., `_parse_execute_response`, `_backend_to_dict`).
+- **Type annotations**: Use `from __future__ import annotations` and modern union syntax (`str | None`).
+- **Exports**: All public types go in `__init__.py` `__all__` list. Keep imports organized: constants, then classes, then functions.
+
+### Testing
+
+- Tests live in `pyorla/tests/`, one file per source module (e.g., `test_client.py` tests `client.py`).
+- Use **pytest** with plain functions (`def test_*`), not unittest classes.
+- Use `monkeypatch` for environment variables, `httpx` mock responses for HTTP tests.
+- Run with `make pyorla-test` (from repo root) or `uv run pytest tests/ -v` (from `pyorla/`).
+
+### Key Modules
+
+| Module | Purpose |
+|--------|---------|
+| `client.py` | `OrlaClient` — sync/async HTTP client for all daemon endpoints |
+| `types.py` | Wire types: `ExecuteRequest`, `LLMBackend`, `AccessPolicy`, constants |
+| `stage.py` | `Stage` — primary execution unit, builds requests, runs tools |
+| `workflow.py` | `Workflow` — DAG of stages with dependency-aware parallel execution |
+| `chat_model.py` | `ChatOrla` — LangChain `BaseChatModel` adapter backed by a Stage |
+| `tools.py` | `Tool`, `ToolCall`, `ToolResult` types and MCP conversion |
+| `langchain_tools.py` | `tool_from_langchain()` — converts LangChain tools to Orla tools |
+| `messages.py` | Bidirectional LangChain/Orla message conversion |
 
 ## Client API Policy
 

@@ -10,6 +10,7 @@ import (
 	"github.com/harvard-cns/orla/internal/core"
 	"github.com/harvard-cns/orla/internal/model"
 	"github.com/harvard-cns/orla/internal/serving"
+	"github.com/harvard-cns/orla/internal/serving/access"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -470,4 +471,171 @@ func TestServer_HandleUpdateBackend_InvalidQuality(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, resp.Code)
 	assert.Contains(t, resp.Body.String(), "quality must be")
+}
+
+// Tests for Access Control
+
+func TestServer_PolicyCRUD(t *testing.T) {
+	layer := serving.NewAgenticLayer()
+	server := NewAgenticServer(layer, ":0", nil)
+
+	// Add a policy.
+	addBody, err := json.Marshal(AddPolicyRequest{
+		Name:      "deny-interns",
+		Subjects:  []string{"tenant:interns"},
+		Resources: []string{"backend:gpt4o"},
+		Action:    "deny",
+	})
+	require.NoError(t, err)
+	resp := httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("POST", "/api/v1/policies", bytes.NewReader(addBody)))
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	// List policies.
+	resp = httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("GET", "/api/v1/policies", nil))
+	require.Equal(t, http.StatusOK, resp.Code)
+	var listResult ListPoliciesResponse
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &listResult))
+	require.Len(t, listResult.Policies, 1)
+	assert.Equal(t, "deny-interns", listResult.Policies[0].Name)
+
+	// Remove the policy.
+	resp = httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("DELETE", "/api/v1/policies/deny-interns", nil))
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	// List should be empty now.
+	resp = httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("GET", "/api/v1/policies", nil))
+	require.Equal(t, http.StatusOK, resp.Code)
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &listResult))
+	assert.Len(t, listResult.Policies, 0)
+}
+
+func TestServer_PolicyAdd_Validation(t *testing.T) {
+	layer := serving.NewAgenticLayer()
+	server := NewAgenticServer(layer, ":0", nil)
+
+	addBody, err := json.Marshal(AddPolicyRequest{
+		Name:      "",
+		Subjects:  []string{"tenant:a"},
+		Resources: []string{"backend:b"},
+		Action:    "deny",
+	})
+	require.NoError(t, err)
+	resp := httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("POST", "/api/v1/policies", bytes.NewReader(addBody)))
+	require.Equal(t, http.StatusBadRequest, resp.Code)
+}
+
+func TestServer_PolicyRemove_NotFound(t *testing.T) {
+	layer := serving.NewAgenticLayer()
+	server := NewAgenticServer(layer, ":0", nil)
+
+	resp := httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("DELETE", "/api/v1/policies/nonexistent", nil))
+	require.Equal(t, http.StatusNotFound, resp.Code)
+}
+
+func TestServer_HandleExecute_BackendAccessDenied(t *testing.T) {
+	srv := model.NewMockLLMServer().ReturnContent("ok").Start()
+	t.Cleanup(srv.Close)
+	t.Setenv(testAPIKeyEnvVar, "test-key")
+
+	layer := serving.NewAgenticLayer()
+	layer.AddLLMBackend("gpt4o", &core.LLMBackend{
+		Type:         core.LLMInferenceAPITypeOpenAI,
+		Endpoint:     srv.URL() + "/v1",
+		APIKeyEnvVar: testAPIKeyEnvVar,
+	}, "openai:gpt-4o")
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name:      "deny-interns-gpt4o",
+		Subjects:  []string{"tenant:interns"},
+		Resources: []string{"backend:gpt4o"},
+		Action:    access.ActionDeny,
+	}))
+
+	server := NewAgenticServer(layer, ":0", nil)
+
+	// Request with denied tags.
+	reqBody := ExecuteRequest{
+		Backend: "gpt4o",
+		Prompt:  "hi",
+		Tags:    map[string]string{"tenant": "interns"},
+	}
+	body, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+	resp := httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("POST", "/api/v1/execute", bytes.NewReader(body)))
+	require.Equal(t, http.StatusForbidden, resp.Code)
+	assert.Contains(t, resp.Body.String(), "access denied")
+
+	// Same backend, different tags — allowed.
+	reqBody.Tags = map[string]string{"tenant": "research"}
+	body, err = json.Marshal(reqBody)
+	require.NoError(t, err)
+	resp = httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("POST", "/api/v1/execute", bytes.NewReader(body)))
+	require.Equal(t, http.StatusOK, resp.Code)
+}
+
+func TestServer_HandleExecute_ToolAccessDenied(t *testing.T) {
+	layer := serving.NewAgenticLayer()
+	layer.AddLLMBackend("be", &core.LLMBackend{
+		Type:     core.LLMInferenceAPITypeOpenAI,
+		Endpoint: "http://x",
+	}, "openai:m")
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name:      "deny-shell",
+		Subjects:  []string{"tenant:untrusted"},
+		Resources: []string{"tool:shell_*"},
+		Action:    access.ActionDeny,
+	}))
+
+	server := NewAgenticServer(layer, ":0", nil)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"backend": "be",
+		"prompt":  "hi",
+		"tags":    map[string]string{"tenant": "untrusted"},
+		"tools": []map[string]any{
+			{"name": "search", "inputSchema": map[string]any{"type": "object"}},
+			{"name": "shell_exec", "inputSchema": map[string]any{"type": "object"}},
+		},
+	})
+	require.NoError(t, err)
+	resp := httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("POST", "/api/v1/execute", bytes.NewReader(reqBody)))
+	require.Equal(t, http.StatusForbidden, resp.Code)
+	assert.Contains(t, resp.Body.String(), "tool access denied")
+}
+
+func TestServer_HandleExecute_DataLabelDenied(t *testing.T) {
+	layer := serving.NewAgenticLayer()
+	layer.AddLLMBackend("ext-openai", &core.LLMBackend{
+		Type:     core.LLMInferenceAPITypeOpenAI,
+		Endpoint: "http://x",
+	}, "openai:gpt-4o")
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name:      "pii-no-external",
+		Subjects:  []string{"backend:ext-*"},
+		Resources: []string{"data:pii"},
+		Action:    access.ActionDeny,
+	}))
+
+	server := NewAgenticServer(layer, ":0", nil)
+
+	reqBody := ExecuteRequest{
+		Backend:    "ext-openai",
+		Prompt:     "summarize",
+		Tags:       map[string]string{"tenant": "hr"},
+		DataLabels: []string{"pii"},
+	}
+	body, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+	resp := httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("POST", "/api/v1/execute", bytes.NewReader(body)))
+	require.Equal(t, http.StatusForbidden, resp.Code)
+	assert.Contains(t, resp.Body.String(), "data access denied")
 }

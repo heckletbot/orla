@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from pyorla.types import (
+    AccessPolicy,
     CostModel,
     ExecuteRequest,
     InferenceResponse,
@@ -151,6 +152,51 @@ class OrlaClient:
         await _araise_http(resp)
 
     # ------------------------------------------------------------------
+    # Access control policies
+    # ------------------------------------------------------------------
+
+    def add_policy(self, policy: AccessPolicy) -> None:
+        """Install or replace an access control policy."""
+        payload = {
+            "name": policy.name,
+            "subjects": policy.subjects,
+            "resources": policy.resources,
+            "action": policy.action,
+        }
+        resp = self._sync.post("/api/v1/policies", json=payload)
+        _raise_http(resp)
+
+    async def aadd_policy(self, policy: AccessPolicy) -> None:
+        payload = {
+            "name": policy.name,
+            "subjects": policy.subjects,
+            "resources": policy.resources,
+            "action": policy.action,
+        }
+        resp = await self._async.post("/api/v1/policies", json=payload)
+        await _araise_http(resp)
+
+    def list_policies(self) -> list[AccessPolicy]:
+        """List all access control policies."""
+        resp = self._sync.get("/api/v1/policies")
+        _raise_http(resp)
+        return _parse_policies(resp.json())
+
+    async def alist_policies(self) -> list[AccessPolicy]:
+        resp = await self._async.get("/api/v1/policies")
+        await _araise_http(resp)
+        return _parse_policies(resp.json())
+
+    def remove_policy(self, name: str) -> None:
+        """Remove an access control policy by name."""
+        resp = self._sync.delete(f"/api/v1/policies/{name}")
+        _raise_http(resp)
+
+    async def aremove_policy(self, name: str) -> None:
+        resp = await self._async.delete(f"/api/v1/policies/{name}")
+        await _araise_http(resp)
+
+    # ------------------------------------------------------------------
     # Execute (non-streaming)
     # ------------------------------------------------------------------
 
@@ -280,6 +326,18 @@ async def _araise_http(resp: httpx.Response) -> None:
             body=text or None,
             request_id=rid if isinstance(rid, str) else None,
         ) from e
+
+
+def _parse_policies(data: dict) -> list[AccessPolicy]:
+    return [
+        AccessPolicy(
+            name=p["name"],
+            subjects=p.get("subjects", []),
+            resources=p.get("resources", []),
+            action=p.get("action", ""),
+        )
+        for p in data.get("policies", [])
+    ]
 
 
 def _backend_to_dict(b: LLMBackend) -> dict[str, Any]:

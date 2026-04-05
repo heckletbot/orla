@@ -26,8 +26,11 @@ def _random_workflow_id() -> str:
 class Workflow:
     """A DAG of Stages with dependency-aware scheduling."""
 
-    def __init__(self, client: OrlaClient) -> None:
+    def __init__(
+        self, client: OrlaClient, *, tags: dict[str, str] | None = None
+    ) -> None:
         self.client = client
+        self.tags: dict[str, str] = tags or {}
         self._stages: dict[str, Stage] = {}
         self._dependencies: dict[str, list[str]] = {}
 
@@ -64,6 +67,11 @@ class Workflow:
         workflow_id = _random_workflow_id()
         for s in self._stages.values():
             s.set_workflow_id(workflow_id)
+            # Merge workflow-level tags into stage (stage-level tags take precedence).
+            if self.tags:
+                merged = dict(self.tags)
+                merged.update(s.tags)
+                s.tags = merged
 
         remaining_deps: dict[str, int] = {}
         dependents: dict[str, list[str]] = {}
@@ -92,7 +100,7 @@ class Workflow:
 
             while futures:
                 for fut in as_completed(futures):
-                    stage_id = futures.pop(fut)
+                    futures.pop(fut)
                     sid, result = fut.result()
                     results[sid] = result
 

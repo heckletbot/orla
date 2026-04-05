@@ -93,6 +93,8 @@ class Stage:
         self.accuracy_policy: str = ""
 
         self._workflow_id: str = ""
+        self.tags: dict[str, str] = {}
+        self.data_labels: list[str] = []
 
     # ---- Setters ----
 
@@ -153,6 +155,12 @@ class Stage:
     def set_workflow_id(self, wf_id: str) -> None:
         self._workflow_id = wf_id
 
+    def set_tags(self, tags: dict[str, str]) -> None:
+        self.tags = tags
+
+    def set_data_labels(self, labels: list[str]) -> None:
+        self.data_labels = labels
+
     # ---- Tools ----
 
     def add_tool(self, tool: Tool) -> None:
@@ -188,6 +196,8 @@ class Stage:
         req.workflow_id = self._workflow_id
         req.accuracy = self.accuracy
         req.accuracy_policy = self.accuracy_policy
+        req.tags = self.tags
+        req.data_labels = self.data_labels
 
         if self.tools:
             req.tools = [t.to_mcp() for t in self.tools.values()]

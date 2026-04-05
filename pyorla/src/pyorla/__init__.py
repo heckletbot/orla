@@ -45,6 +45,8 @@ from pyorla.tools import (
     tool_runner_from_schema,
 )
 from pyorla.types import (
+    ACCESS_ACTION_ALLOW,
+    ACCESS_ACTION_DENY,
     ACCURACY_POLICY_PREFER,
     ACCURACY_POLICY_STRICT,
     CACHE_POLICY_AUTO,
@@ -56,6 +58,7 @@ from pyorla.types import (
     REQUEST_SCHEDULING_POLICY_PRIORITY,
     SCHEDULING_POLICY_FCFS,
     SCHEDULING_POLICY_PRIORITY,
+    AccessPolicy,
     CacheHints,
     CostModel,
     ExecuteRequest,
@@ -113,6 +116,10 @@ __all__ = [
     "langchain_to_orla",
     "orla_response_to_ai_message",
     "orla_to_langchain",
+    # Access control
+    "AccessPolicy",
+    "ACCESS_ACTION_ALLOW",
+    "ACCESS_ACTION_DENY",
     # Types
     "CostModel",
     "LLMBackend",
