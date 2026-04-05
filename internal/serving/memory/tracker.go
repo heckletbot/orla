@@ -3,133 +3,63 @@ package memory
 import (
 	"sync"
 	"time"
+
+	"github.com/harvard-cns/orla/internal/core"
 )
 
-// StageStatus tracks the lifecycle of a single stage within the tracker.
-type StageStatus string
-
-const (
-	StageStatusActive    StageStatus = "active"
-	StageStatusCompleted StageStatus = "completed"
-)
-
-// StageState records per-stage metadata needed for cache decisions.
-type StageState struct {
-	StageID string
-	Backend string
-	Model     string
-	Tokens    int
-	Status    StageStatus
-	StartedAt time.Time
-}
-
-// BackendCacheEntry tracks a workflow's cache footprint on a specific backend.
-type BackendCacheEntry struct {
-	Backend    string
-	Model      string
-	Tokens     int
-	Preserved  bool
-	LastUpdate time.Time
-}
-
-// WorkflowState is the Memory Manager's view of a single active workflow.
-type WorkflowState struct {
-	ID              string
-	ActiveStages    map[string]*StageState       // stageID -> state
-	CompletedStages map[string]*StageState       // stageID -> state
-	BackendUsage    map[string]*BackendCacheEntry // backend name -> cache entry
-	StartedAt       time.Time
-	LastActivityAt  time.Time
-}
-
-// InflightRequest describes a request currently being processed by a backend worker.
-type InflightRequest struct {
-	RequestID  string
-	WorkflowID string
-	StageID    string
-	Backend    string
-	Streaming  bool
-	StartedAt  time.Time
-}
-
-// Tracker maintains the state of all active workflows and in-flight requests.
-// It is the Memory Manager's source of truth for making cache decisions.
+// Tracker maintains cache-specific and in-flight request state for active workflows.
+// Workflow lifecycle is managed by core.WorkflowManager; the Tracker delegates
+// to it for workflow registration and lookup.
 type Tracker struct {
-	mu        sync.Mutex
-	workflows map[string]*WorkflowState            // workflowID -> state
-	inflight  map[string]map[string]*InflightRequest // backend -> requestID -> request
+	mu       sync.Mutex
+	wm       *core.WorkflowManager
+	inflight map[string]map[string]*core.InflightRequest // backend -> requestID -> request
 }
 
-// NewTracker creates a new workflow state tracker.
-func NewTracker() *Tracker {
+// NewTracker creates a new tracker backed by the given workflow manager.
+func NewTracker(wm *core.WorkflowManager) *Tracker {
 	return &Tracker{
-		workflows: make(map[string]*WorkflowState),
-		inflight:  make(map[string]map[string]*InflightRequest),
+		wm:       wm,
+		inflight: make(map[string]map[string]*core.InflightRequest),
 	}
 }
 
 // RegisterWorkflow initializes tracking for a new workflow execution.
-// Idempotent: calling with an already-registered workflowID is a no-op.
 func (t *Tracker) RegisterWorkflow(workflowID string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if _, exists := t.workflows[workflowID]; exists {
-		return
-	}
-	now := time.Now()
-	t.workflows[workflowID] = &WorkflowState{
-		ID:              workflowID,
-		ActiveStages:    make(map[string]*StageState),
-		CompletedStages: make(map[string]*StageState),
-		BackendUsage:    make(map[string]*BackendCacheEntry),
-		StartedAt:       now,
-		LastActivityAt:  now,
-	}
+	t.wm.Register(workflowID)
 }
 
 // DeregisterWorkflow removes a workflow from tracking.
 func (t *Tracker) DeregisterWorkflow(workflowID string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	delete(t.workflows, workflowID)
+	t.wm.Deregister(workflowID)
 }
 
 // GetWorkflow returns a snapshot of a workflow's state, or nil if not found.
-func (t *Tracker) GetWorkflow(workflowID string) *WorkflowState {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.workflows[workflowID]
+func (t *Tracker) GetWorkflow(workflowID string) *core.WorkflowState {
+	return t.wm.Get(workflowID)
 }
 
 // ActiveWorkflowIDs returns the IDs of all active workflows.
 func (t *Tracker) ActiveWorkflowIDs() []string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	ids := make([]string, 0, len(t.workflows))
-	for id := range t.workflows {
-		ids = append(ids, id)
-	}
-	return ids
+	return t.wm.ActiveWorkflowIDs()
 }
 
 // OnStageStart records that a stage has begun executing.
 func (t *Tracker) OnStageStart(signal StageTransition) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	wf, ok := t.workflows[signal.WorkflowID]
-	if !ok {
+	wf := t.wm.Get(signal.WorkflowID)
+	if wf == nil {
 		return
 	}
 	now := time.Now()
-	wf.ActiveStages[signal.StageID] = &StageState{
-		StageID: signal.StageID,
-		Backend: signal.Backend,
+	wf.ActiveStages[signal.StageID] = &core.StageState{
+		StageID:   signal.StageID,
+		Backend:   signal.Backend,
 		Model:     signal.Model,
 		Tokens:    signal.ContextTokens,
-		Status:    StageStatusActive,
+		Status:    core.StageStatusActive,
 		StartedAt: now,
 	}
-	wf.BackendUsage[signal.Backend] = &BackendCacheEntry{
+	wf.BackendUsage[signal.Backend] = &core.BackendCacheEntry{
 		Backend:    signal.Backend,
 		Model:      signal.Model,
 		Tokens:     signal.ContextTokens,
@@ -141,16 +71,14 @@ func (t *Tracker) OnStageStart(signal StageTransition) {
 
 // OnStageComplete records that a stage has finished executing.
 func (t *Tracker) OnStageComplete(signal StageTransition) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	wf, ok := t.workflows[signal.WorkflowID]
-	if !ok {
+	wf := t.wm.Get(signal.WorkflowID)
+	if wf == nil {
 		return
 	}
 	now := time.Now()
 	stage, exists := wf.ActiveStages[signal.StageID]
 	if exists {
-		stage.Status = StageStatusCompleted
+		stage.Status = core.StageStatusCompleted
 		stage.Tokens = signal.ContextTokens
 		wf.CompletedStages[signal.StageID] = stage
 		delete(wf.ActiveStages, signal.StageID)
@@ -164,10 +92,8 @@ func (t *Tracker) OnStageComplete(signal StageTransition) {
 
 // MarkBackendFlushed marks a workflow's cache on a backend as no longer preserved.
 func (t *Tracker) MarkBackendFlushed(workflowID, backend string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	wf, ok := t.workflows[workflowID]
-	if !ok {
+	wf := t.wm.Get(workflowID)
+	if wf == nil {
 		return
 	}
 	if entry, ok := wf.BackendUsage[backend]; ok {
@@ -177,14 +103,12 @@ func (t *Tracker) MarkBackendFlushed(workflowID, backend string) {
 
 // LastStageOnBackend returns the most recently completed stage for a workflow
 // on a given backend, or nil if none.
-func (t *Tracker) LastStageOnBackend(workflowID, backend string) *StageState {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	wf, ok := t.workflows[workflowID]
-	if !ok {
+func (t *Tracker) LastStageOnBackend(workflowID, backend string) *core.StageState {
+	wf := t.wm.Get(workflowID)
+	if wf == nil {
 		return nil
 	}
-	var latest *StageState
+	var latest *core.StageState
 	for _, s := range wf.CompletedStages {
 		if s.Backend == backend {
 			if latest == nil || s.StartedAt.After(latest.StartedAt) {
@@ -196,12 +120,12 @@ func (t *Tracker) LastStageOnBackend(workflowID, backend string) *StageState {
 }
 
 // RecordInflight marks a request as in-flight on a backend.
-func (t *Tracker) RecordInflight(req InflightRequest) {
+func (t *Tracker) RecordInflight(req core.InflightRequest) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	byBackend, ok := t.inflight[req.Backend]
 	if !ok {
-		byBackend = make(map[string]*InflightRequest)
+		byBackend = make(map[string]*core.InflightRequest)
 		t.inflight[req.Backend] = byBackend
 	}
 	byBackend[req.RequestID] = &req
@@ -239,14 +163,19 @@ func (t *Tracker) InflightWorkflowsOnBackend(backend string) map[string]struct{}
 // cache entries on the given backend, excluding any currently in-flight.
 func (t *Tracker) WorkflowsWithPreservedCacheOnBackend(backend string) []string {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	inflightWFs := make(map[string]struct{})
 	for _, req := range t.inflight[backend] {
 		inflightWFs[req.WorkflowID] = struct{}{}
 	}
+	t.mu.Unlock()
+
 	var ids []string
-	for wfID, wf := range t.workflows {
+	for _, wfID := range t.wm.ActiveWorkflowIDs() {
 		if _, busy := inflightWFs[wfID]; busy {
+			continue
+		}
+		wf := t.wm.Get(wfID)
+		if wf == nil {
 			continue
 		}
 		if entry, ok := wf.BackendUsage[backend]; ok && entry.Preserved {

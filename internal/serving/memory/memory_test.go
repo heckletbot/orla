@@ -12,7 +12,7 @@ import (
 // --- Tracker tests ---
 
 func TestTracker_RegisterDeregister(t *testing.T) {
-	tr := NewTracker()
+	tr := NewTracker(core.NewWorkflowManager())
 	tr.RegisterWorkflow("wf1")
 	assert.Contains(t, tr.ActiveWorkflowIDs(), "wf1")
 
@@ -21,7 +21,7 @@ func TestTracker_RegisterDeregister(t *testing.T) {
 }
 
 func TestTracker_StageLifecycle(t *testing.T) {
-	tr := NewTracker()
+	tr := NewTracker(core.NewWorkflowManager())
 	tr.RegisterWorkflow("wf1")
 
 	tr.OnStageStart(StageTransition{
@@ -48,8 +48,8 @@ func TestTracker_StageLifecycle(t *testing.T) {
 }
 
 func TestTracker_Inflight(t *testing.T) {
-	tr := NewTracker()
-	tr.RecordInflight(InflightRequest{
+	tr := NewTracker(core.NewWorkflowManager())
+	tr.RecordInflight(core.InflightRequest{
 		RequestID: "r1", WorkflowID: "wf1", StageID: "s1", Backend: "b1",
 	})
 	assert.Equal(t, 1, tr.InflightOnBackend("b1"))
@@ -62,7 +62,7 @@ func TestTracker_Inflight(t *testing.T) {
 }
 
 func TestTracker_PreservedCache(t *testing.T) {
-	tr := NewTracker()
+	tr := NewTracker(core.NewWorkflowManager())
 	tr.RegisterWorkflow("wf1")
 	tr.RegisterWorkflow("wf2")
 
@@ -171,7 +171,7 @@ func TestFlushAtBoundary_SameBackendNoop(t *testing.T) {
 
 func TestFlushUnderPressure_BelowThreshold(t *testing.T) {
 	p := NewFlushUnderPressurePolicy(0.85)
-	tr := NewTracker()
+	tr := NewTracker(core.NewWorkflowManager())
 	tr.RegisterWorkflow("wf1")
 	tr.OnStageStart(StageTransition{
 		WorkflowID: "wf1", StageID: "s1", Backend: "b1", Model: "m1",
@@ -184,7 +184,7 @@ func TestFlushUnderPressure_BelowThreshold(t *testing.T) {
 
 func TestFlushUnderPressure_AboveThreshold(t *testing.T) {
 	p := NewFlushUnderPressurePolicy(0.85)
-	tr := NewTracker()
+	tr := NewTracker(core.NewWorkflowManager())
 	tr.RegisterWorkflow("wf1")
 	tr.OnStageStart(StageTransition{
 		WorkflowID: "wf1", StageID: "s1", Backend: "b1", Model: "m1",
@@ -219,7 +219,7 @@ func TestPolicyChain_FirstNonNoopWins(t *testing.T) {
 // --- Manager tests ---
 
 func TestDefaultManager_StageOverridePreserve(t *testing.T) {
-	mm := NewDefaultManager(DefaultManagerConfig{})
+	mm := NewDefaultManager(DefaultManagerConfig{}, core.NewWorkflowManager())
 	mm.RegisterWorkflow("wf1")
 
 	action := mm.OnTransition(context.Background(), StageTransition{
@@ -233,7 +233,7 @@ func TestDefaultManager_StageOverridePreserve(t *testing.T) {
 }
 
 func TestDefaultManager_StageOverrideFlush(t *testing.T) {
-	mm := NewDefaultManager(DefaultManagerConfig{})
+	mm := NewDefaultManager(DefaultManagerConfig{}, core.NewWorkflowManager())
 	mm.RegisterWorkflow("wf1")
 
 	action := mm.OnTransition(context.Background(), StageTransition{
@@ -247,7 +247,7 @@ func TestDefaultManager_StageOverrideFlush(t *testing.T) {
 }
 
 func TestDefaultManager_PolicyChainDecides(t *testing.T) {
-	mm := NewDefaultManager(DefaultManagerConfig{PreserveThreshold: core.Ptr(256)})
+	mm := NewDefaultManager(DefaultManagerConfig{PreserveThreshold: core.Ptr(256)}, core.NewWorkflowManager())
 	mm.RegisterWorkflow("wf1")
 
 	mm.OnTransition(context.Background(), StageTransition{
@@ -267,7 +267,7 @@ func TestDefaultManager_PolicyChainDecides(t *testing.T) {
 }
 
 func TestDefaultManager_WorkflowCompleteFlushes(t *testing.T) {
-	mm := NewDefaultManager(DefaultManagerConfig{})
+	mm := NewDefaultManager(DefaultManagerConfig{}, core.NewWorkflowManager())
 	mm.RegisterWorkflow("wf1")
 
 	action := mm.OnTransition(context.Background(), StageTransition{
@@ -279,7 +279,7 @@ func TestDefaultManager_WorkflowCompleteFlushes(t *testing.T) {
 }
 
 func TestDefaultManager_MemoryPressure(t *testing.T) {
-	mm := NewDefaultManager(DefaultManagerConfig{PressureThreshold: core.Ptr(0.80)})
+	mm := NewDefaultManager(DefaultManagerConfig{PressureThreshold: core.Ptr(0.80)}, core.NewWorkflowManager())
 	mm.RegisterWorkflow("wf1")
 
 	mm.OnTransition(context.Background(), StageTransition{
@@ -300,10 +300,10 @@ func TestDefaultManager_MemoryPressure(t *testing.T) {
 }
 
 func TestDefaultManager_InflightTracking(t *testing.T) {
-	mm := NewDefaultManager(DefaultManagerConfig{})
+	mm := NewDefaultManager(DefaultManagerConfig{}, core.NewWorkflowManager())
 	mm.RegisterWorkflow("wf1")
 
-	mm.RecordInflight(InflightRequest{
+	mm.RecordInflight(core.InflightRequest{
 		RequestID: "r1", WorkflowID: "wf1", StageID: "s1", Backend: "b1",
 	})
 	assert.Equal(t, 1, mm.tracker.InflightOnBackend("b1"))

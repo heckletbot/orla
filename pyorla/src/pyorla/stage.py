@@ -95,6 +95,7 @@ class Stage:
         self._workflow_id: str = ""
         self.tags: dict[str, str] = {}
         self.data_labels: list[str] = []
+        self.declassifies: list[str] = []
 
     # ---- Setters ----
 
@@ -160,6 +161,9 @@ class Stage:
 
     def set_data_labels(self, labels: list[str]) -> None:
         self.data_labels = labels
+
+    def set_declassifies(self, labels: list[str]) -> None:
+        self.declassifies = labels
 
     # ---- Tools ----
 

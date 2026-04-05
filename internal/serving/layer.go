@@ -18,17 +18,20 @@ import (
 type AgenticLayer struct {
 	llmBackendManager *LLMBackendManager
 	MemoryManager     *memory.DefaultManager
+	WorkflowManager   *core.WorkflowManager
 	PolicyStore       *access.Store
 	policyEvaluator   *access.Evaluator
 }
 
 // NewAgenticLayer creates a new serving layer.
 func NewAgenticLayer() *AgenticLayer {
-	mm := memory.NewDefaultManager(memory.DefaultManagerConfig{})
+	wm := core.NewWorkflowManager()
+	mm := memory.NewDefaultManager(memory.DefaultManagerConfig{}, wm)
 	ps := access.NewStore()
 	return &AgenticLayer{
 		llmBackendManager: NewLLMBackendManager(mm),
 		MemoryManager:     mm,
+		WorkflowManager:   wm,
 		PolicyStore:       ps,
 		policyEvaluator:   access.NewEvaluator(ps),
 	}
@@ -116,7 +119,7 @@ func (l *AgenticLayer) NotifyWorkflowComplete(ctx context.Context, workflowID st
 			Backend:        backend,
 		})
 	}
-	l.MemoryManager.DeregisterWorkflow(workflowID)
+	l.WorkflowManager.Deregister(workflowID)
 }
 
 // CheckBackendAccess checks whether the given tags permit access to the named backend.

@@ -1,5 +1,7 @@
 package memory
 
+import "github.com/harvard-cns/orla/internal/core"
+
 const defaultPreserveThresholdTokens = 256
 
 // Policy evaluates a stage transition and returns a cache action.
@@ -103,7 +105,7 @@ func (p *FlushUnderPressurePolicy) EvaluatePressure(backend string, currentPress
 	}
 	// Flush the oldest idle workflow first (greedy: free memory quickly).
 	var oldestID string
-	var oldestTime *StageState
+	var oldestTime *core.StageState
 	for _, wfID := range candidates {
 		last := tracker.LastStageOnBackend(wfID, backend)
 		if last == nil {

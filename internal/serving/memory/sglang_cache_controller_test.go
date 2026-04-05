@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/harvard-cns/orla/internal/core"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -109,7 +111,7 @@ func TestDefaultManager_FlushCallsCacheController(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	mm := NewDefaultManager(DefaultManagerConfig{})
+	mm := NewDefaultManager(DefaultManagerConfig{}, core.NewWorkflowManager())
 	cc := NewSGLangCacheController(srv.URL)
 	mm.RegisterCacheController("b1", cc)
 	mm.RegisterWorkflow("wf1")
@@ -135,13 +137,13 @@ func TestDefaultManager_FlushSkippedWhenOtherInflight(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	mm := NewDefaultManager(DefaultManagerConfig{})
+	mm := NewDefaultManager(DefaultManagerConfig{}, core.NewWorkflowManager())
 	cc := NewSGLangCacheController(srv.URL)
 	mm.RegisterCacheController("b1", cc)
 	mm.RegisterWorkflow("wf1")
 	mm.RegisterWorkflow("wf2")
 
-	mm.RecordInflight(InflightRequest{
+	mm.RecordInflight(core.InflightRequest{
 		RequestID: "r2", WorkflowID: "wf2", StageID: "s2", Backend: "b1",
 	})
 

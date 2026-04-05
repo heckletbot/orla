@@ -192,6 +192,9 @@ def _clone_stage(src: Stage) -> Stage:
     s.cache_hints = src.cache_hints
     s.stream = src.stream
     s._workflow_id = src._workflow_id
+    s.tags = dict(src.tags)
+    s.data_labels = list(src.data_labels)
+    s.declassifies = list(src.declassifies)
     return s
 
 

@@ -110,6 +110,7 @@ func (s *AgenticServer) registerRoutes(rateLimitRPS int) {
 
 	s.mux.HandleFunc("GET /api/v1/backends", s.handleListBackends)
 	s.mux.HandleFunc("PATCH /api/v1/backends/{name}", s.handleUpdateBackend)
+	s.mux.HandleFunc("POST /api/v1/workflows", s.handleRegisterWorkflow)
 	s.mux.HandleFunc("POST /api/v1/workflow/complete", s.handleWorkflowComplete)
 
 	s.mux.HandleFunc("POST /api/v1/policies", s.handleAddPolicy)
@@ -213,6 +214,18 @@ func (s *AgenticServer) handleExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Compute effective data labels: explicit labels merged with labels
+	// inherited from upstream stages in the registered workflow DAG.
+	effectiveLabels := req.DataLabels
+	if req.WorkflowID != "" {
+		var err error
+		effectiveLabels, err = s.layer.WorkflowManager.EffectiveLabels(req.WorkflowID, req.StageID, req.DataLabels)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
 	// Access control enforcement.
 	if len(req.Tags) > 0 {
 		// Check LLM backend access.
@@ -229,9 +242,9 @@ func (s *AgenticServer) handleExecute(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Check data label access.
-		if len(req.DataLabels) > 0 {
-			if d := s.layer.CheckDataAccess(req.Tags, req.Backend, req.DataLabels); !d.Allowed {
+		// Check data label access (using effective labels from DAG propagation).
+		if len(effectiveLabels) > 0 {
+			if d := s.layer.CheckDataAccess(req.Tags, req.Backend, effectiveLabels); !d.Allowed {
 				http.Error(w, fmt.Sprintf("data access denied for backend %q: %s", req.Backend, d.Reason), http.StatusForbidden)
 				return
 			}
@@ -602,6 +615,73 @@ func (s *AgenticServer) handleRemovePolicy(w http.ResponseWriter, r *http.Reques
 	}
 
 	zap.L().Info("Removed access control policy", zap.String("name", name))
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	core.WriteJSONResponse(w, map[string]bool{"success": true})
+}
+
+// Workflow DAG registration for data label propagation decisions.
+
+// RegisterWorkflowRequest is the request body for registering a workflow DAG.
+type RegisterWorkflowRequest struct {
+	WorkflowID       string                        `json:"workflow_id"`
+	Edges            []WorkflowEdgeEntry            `json:"edges"`
+	Declassifications []WorkflowDeclassificationEntry `json:"declassifications,omitempty"`
+}
+
+// WorkflowEdgeEntry is a single directed edge in the workflow DAG.
+type WorkflowEdgeEntry struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// WorkflowDeclassificationEntry declares which labels a stage strips from propagation.
+type WorkflowDeclassificationEntry struct {
+	StageID string   `json:"stage_id"`
+	Labels  []string `json:"labels"`
+}
+
+func (s *AgenticServer) handleRegisterWorkflow(w http.ResponseWriter, r *http.Request) {
+	body := http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	var req RegisterWorkflowRequest
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("failed to decode request: %v", err), http.StatusBadRequest)
+		return
+	}
+	if req.WorkflowID == "" {
+		http.Error(w, "workflow_id is required", http.StatusBadRequest)
+		return
+	}
+
+	edges := make([][2]string, len(req.Edges))
+	for i, e := range req.Edges {
+		if e.From == "" || e.To == "" {
+			http.Error(w, fmt.Sprintf("edge %d: both from and to are required", i), http.StatusBadRequest)
+			return
+		}
+		edges[i] = [2]string{e.From, e.To}
+	}
+
+	s.layer.WorkflowManager.RegisterEdges(req.WorkflowID, edges)
+
+	if len(req.Declassifications) > 0 {
+		declass := make(map[string][]string, len(req.Declassifications))
+		for _, d := range req.Declassifications {
+			if d.StageID == "" || len(d.Labels) == 0 {
+				continue
+			}
+			declass[d.StageID] = d.Labels
+		}
+		if len(declass) > 0 {
+			s.layer.WorkflowManager.RegisterDeclassifications(req.WorkflowID, declass)
+		}
+	}
+
+	zap.L().Debug("Registered workflow DAG",
+		zap.String("workflow_id", req.WorkflowID),
+		zap.Int("edges", len(edges)),
+		zap.Int("declassifications", len(req.Declassifications)))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

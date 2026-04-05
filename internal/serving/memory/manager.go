@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/harvard-cns/orla/internal/core"
 	"go.uber.org/zap"
 )
 
@@ -31,7 +32,7 @@ type Manager interface {
 	OnMemoryPressure(ctx context.Context, backend string, pressure float64) []CacheAction
 	RegisterWorkflow(workflowID string)
 	DeregisterWorkflow(workflowID string)
-	RecordInflight(req InflightRequest)
+	RecordInflight(req core.InflightRequest)
 	ClearInflight(backend, requestID string)
 }
 
@@ -71,14 +72,14 @@ type DefaultManager struct {
 }
 
 // NewDefaultManager creates a new DefaultManager with the standard policy chain.
-func NewDefaultManager(cfg DefaultManagerConfig) *DefaultManager {
+func NewDefaultManager(cfg DefaultManagerConfig, wm *core.WorkflowManager) *DefaultManager {
 	pressurePolicy := NewFlushUnderPressurePolicy(cfg.EffectivePressureThreshold())
 	chain := NewPolicyChain(
 		NewPreserveOnSmallIncrementPolicy(cfg.EffectivePreserveThreshold()),
 		NewFlushAtBoundaryPolicy(),
 	)
 	return &DefaultManager{
-		tracker:          NewTracker(),
+		tracker:          NewTracker(wm),
 		chain:            chain,
 		pressurePolicy:   pressurePolicy,
 		cacheControllers: make(map[string]CacheController),
@@ -111,7 +112,7 @@ func (m *DefaultManager) DeregisterWorkflow(workflowID string) {
 }
 
 // RecordInflight marks a request as in-flight.
-func (m *DefaultManager) RecordInflight(req InflightRequest) {
+func (m *DefaultManager) RecordInflight(req core.InflightRequest) {
 	m.tracker.RecordInflight(req)
 }
 

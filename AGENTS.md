@@ -219,6 +219,7 @@ The `orla serve` daemon exposes an HTTP API for inference and backend management
 | `/api/v1/backends` | GET | List registered backends |
 | `/api/v1/backends` | POST | Register an LLM backend |
 | `/api/v1/backends/{name}` | PATCH | Live-update backend cost_model, quality, or max_concurrency |
+| `/api/v1/workflows` | POST | Register a workflow DAG for data label propagation |
 | `/api/v1/policies` | POST | Add an access control policy |
 | `/api/v1/policies` | GET | List all access control policies |
 | `/api/v1/policies/{name}` | DELETE | Remove an access control policy |

@@ -73,6 +73,17 @@ class Workflow:
                 merged.update(s.tags)
                 s.tags = merged
 
+        # Register the DAG with the daemon for data label propagation.
+        edges: list[tuple[str, str]] = []
+        for sid, deps in self._dependencies.items():
+            for dep_id in deps:
+                edges.append((dep_id, sid))
+        if edges:
+            try:
+                self.client.register_workflow(workflow_id, edges)
+            except Exception:
+                pass  # best-effort; access control still works per-request
+
         remaining_deps: dict[str, int] = {}
         dependents: dict[str, list[str]] = {}
         for sid in self._stages:

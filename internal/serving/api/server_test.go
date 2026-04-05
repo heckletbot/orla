@@ -639,3 +639,100 @@ func TestServer_HandleExecute_DataLabelDenied(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, resp.Code)
 	assert.Contains(t, resp.Body.String(), "data access denied")
 }
+
+func TestServer_HandleRegisterWorkflow(t *testing.T) {
+	layer := serving.NewAgenticLayer()
+	server := NewAgenticServer(layer, ":0", nil)
+
+	wfBody, err := json.Marshal(RegisterWorkflowRequest{
+		WorkflowID: "wf-1",
+		Edges:      []WorkflowEdgeEntry{{From: "a", To: "b"}},
+	})
+	require.NoError(t, err)
+	resp := httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("POST", "/api/v1/workflows", bytes.NewReader(wfBody)))
+	require.Equal(t, http.StatusOK, resp.Code)
+}
+
+func TestServer_HandleRegisterWorkflow_MissingID(t *testing.T) {
+	layer := serving.NewAgenticLayer()
+	server := NewAgenticServer(layer, ":0", nil)
+
+	wfBody, err := json.Marshal(RegisterWorkflowRequest{
+		Edges: []WorkflowEdgeEntry{{From: "a", To: "b"}},
+	})
+	require.NoError(t, err)
+	resp := httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("POST", "/api/v1/workflows", bytes.NewReader(wfBody)))
+	require.Equal(t, http.StatusBadRequest, resp.Code)
+}
+
+func TestServer_HandleExecute_DataLabelPropagation(t *testing.T) {
+	// DAG: stage-a → stage-b. Stage A carries PII, stage B inherits it.
+	srv := model.NewMockLLMServer().ReturnContent("ok").Start()
+	t.Cleanup(srv.Close)
+	t.Setenv(testAPIKeyEnvVar, "test-key")
+
+	layer := serving.NewAgenticLayer()
+	layer.AddLLMBackend("local", &core.LLMBackend{
+		Type:         core.LLMInferenceAPITypeOpenAI,
+		Endpoint:     srv.URL() + "/v1",
+		APIKeyEnvVar: testAPIKeyEnvVar,
+	}, "openai:m")
+	layer.AddLLMBackend("external", &core.LLMBackend{
+		Type:         core.LLMInferenceAPITypeOpenAI,
+		Endpoint:     srv.URL() + "/v1",
+		APIKeyEnvVar: testAPIKeyEnvVar,
+	}, "openai:m2")
+
+	// Policy: PII cannot go to external backend.
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name:      "pii-no-ext",
+		Subjects:  []string{"backend:external"},
+		Resources: []string{"data:pii"},
+		Action:    access.ActionDeny,
+	}))
+
+	server := NewAgenticServer(layer, ":0", nil)
+
+	// Register the workflow DAG.
+	wfBody, err := json.Marshal(RegisterWorkflowRequest{
+		WorkflowID: "wf-prop",
+		Edges:      []WorkflowEdgeEntry{{From: "stage-a", To: "stage-b"}},
+	})
+	require.NoError(t, err)
+	resp := httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("POST", "/api/v1/workflows", bytes.NewReader(wfBody)))
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	// Stage A on local backend with PII — allowed.
+	reqBody := ExecuteRequest{
+		Backend:    "local",
+		StageID:    "stage-a",
+		Prompt:     "process employee records",
+		WorkflowID: "wf-prop",
+		Tags:       map[string]string{"tenant": "hr"},
+		DataLabels: []string{"pii"},
+	}
+	body, err := json.Marshal(reqBody)
+	require.NoError(t, err)
+	resp = httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("POST", "/api/v1/execute", bytes.NewReader(body)))
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	// Stage B on external backend, no explicit labels — denied because
+	// it inherits PII from stage A through the registered DAG edge.
+	reqBody = ExecuteRequest{
+		Backend:    "external",
+		StageID:    "stage-b",
+		Prompt:     "summarize",
+		WorkflowID: "wf-prop",
+		Tags:       map[string]string{"tenant": "hr"},
+	}
+	body, err = json.Marshal(reqBody)
+	require.NoError(t, err)
+	resp = httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("POST", "/api/v1/execute", bytes.NewReader(body)))
+	require.Equal(t, http.StatusForbidden, resp.Code)
+	assert.Contains(t, resp.Body.String(), "data access denied")
+}

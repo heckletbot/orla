@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/harvard-cns/orla/internal/core"
 	"github.com/harvard-cns/orla/internal/model"
 	"github.com/harvard-cns/orla/internal/serving/cost"
 	"github.com/harvard-cns/orla/internal/serving/memory"
@@ -129,7 +130,7 @@ func (e *backendExecutor) worker() {
 		requestID := fmt.Sprintf("%s-%s-%d", req.backend, req.stageName, req.enqueuedAt.UnixNano())
 		if e.memoryManager != nil && req.workflowID != "" {
 			e.memoryManager.RegisterWorkflow(req.workflowID)
-			e.memoryManager.RecordInflight(memory.InflightRequest{
+			e.memoryManager.RecordInflight(core.InflightRequest{
 				RequestID:  requestID,
 				WorkflowID: req.workflowID,
 				StageID:    req.stageName,

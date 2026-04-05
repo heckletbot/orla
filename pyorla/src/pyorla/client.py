@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import AsyncIterator, Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pyorla.stage import Stage
 
 import httpx
 
@@ -195,6 +198,83 @@ class OrlaClient:
     async def aremove_policy(self, name: str) -> None:
         resp = await self._async.delete(f"/api/v1/policies/{name}")
         await _araise_http(resp)
+
+    # ------------------------------------------------------------------
+    # Workflow DAG registration (for data label propagation)
+    # ------------------------------------------------------------------
+
+    def register_workflow(
+        self,
+        workflow_id: str,
+        edges: list[tuple[str, str]],
+        declassifications: dict[str, list[str]] | None = None,
+    ) -> None:
+        """Register a workflow DAG so the daemon propagates data labels along edges.
+
+        *declassifications* maps stage IDs to lists of labels that stage strips
+        from propagation. A stage that declassifies a label still inherits it
+        (policies apply to its own execution), but downstream stages do not.
+        """
+        payload: dict[str, Any] = {
+            "workflow_id": workflow_id,
+            "edges": [{"from": f, "to": t} for f, t in edges],
+        }
+        if declassifications:
+            payload["declassifications"] = [
+                {"stage_id": sid, "labels": labels}
+                for sid, labels in declassifications.items()
+            ]
+        resp = self._sync.post("/api/v1/workflows", json=payload)
+        _raise_http(resp)
+
+    async def aregister_workflow(
+        self,
+        workflow_id: str,
+        edges: list[tuple[str, str]],
+        declassifications: dict[str, list[str]] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "workflow_id": workflow_id,
+            "edges": [{"from": f, "to": t} for f, t in edges],
+        }
+        if declassifications:
+            payload["declassifications"] = [
+                {"stage_id": sid, "labels": labels}
+                for sid, labels in declassifications.items()
+            ]
+        resp = await self._async.post("/api/v1/workflows", json=payload)
+        await _araise_http(resp)
+
+    def register_workflow_from_langgraph(
+        self,
+        workflow_id: str,
+        compiled_graph: Any,
+        stages: dict[str, "Stage"],
+    ) -> None:
+        """Register a workflow DAG by extracting edges from a compiled LangGraph.
+
+        *compiled_graph* is a compiled ``langgraph`` graph (the result of
+        ``StateGraph(...).compile()``). *stages* maps LangGraph node names to
+        Orla ``Stage`` objects. Edges between nodes not in *stages* (e.g.,
+        ``__start__``, ``__end__``) are ignored.
+
+        Sets ``workflow_id`` on each stage automatically. If any stage has
+        ``declassifies`` set, those are registered with the daemon.
+        """
+        drawable = compiled_graph.get_graph()
+        edges: list[tuple[str, str]] = []
+        for e in drawable.edges:
+            if e.source in stages and e.target in stages:
+                edges.append((stages[e.source].id, stages[e.target].id))
+        declass: dict[str, list[str]] = {}
+        for stage in stages.values():
+            stage.set_workflow_id(workflow_id)
+            if stage.declassifies:
+                declass[stage.id] = stage.declassifies
+        if edges:
+            self.register_workflow(
+                workflow_id, edges, declassifications=declass or None,
+            )
 
     # ------------------------------------------------------------------
     # Execute (non-streaming)
