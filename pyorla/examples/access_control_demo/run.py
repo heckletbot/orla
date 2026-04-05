@@ -152,20 +152,21 @@ def install_policies(client: OrlaClient) -> None:
     """Install access control policies."""
 
     # --- Model access ---
-    # Interns: deny all, allow only cheap.
-    client.add_policy(AccessPolicy(
-        name="intern-deny-all-backends",
-        subjects=["tenant:interns"],
-        resources=["backend:*"],
-        action=ACCESS_ACTION_DENY,
-    ))
+    # Interns: allow only cheap. No deny needed — once a subject has any policy,
+    # resources without an explicit allow are denied automatically.
     client.add_policy(AccessPolicy(
         name="intern-allow-cheap",
         subjects=["tenant:interns"],
         resources=["backend:cheap"],
         action=ACCESS_ACTION_ALLOW,
     ))
-    # Engineering: deny strong.
+    # Engineering: allow all backends, then deny strong.
+    client.add_policy(AccessPolicy(
+        name="eng-allow-all",
+        subjects=["tenant:engineering"],
+        resources=["backend:*"],
+        action=ACCESS_ACTION_ALLOW,
+    ))
     client.add_policy(AccessPolicy(
         name="eng-deny-strong",
         subjects=["tenant:engineering"],
@@ -174,7 +175,13 @@ def install_policies(client: OrlaClient) -> None:
     ))
 
     # --- Tool access ---
-    # Interns cannot query the HR database.
+    # Interns can use all tools except the HR database.
+    client.add_policy(AccessPolicy(
+        name="intern-allow-all-tools",
+        subjects=["tenant:interns"],
+        resources=["tool:*"],
+        action=ACCESS_ACTION_ALLOW,
+    ))
     client.add_policy(AccessPolicy(
         name="intern-no-hr-db",
         subjects=["tenant:interns"],
