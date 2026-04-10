@@ -35,11 +35,6 @@ We welcome any and all open-source contributions to orla. Orla is designed to be
 
 ## Getting Started
 
-
-<p align="center">
-  <img src="share/main.gif" alt="Orla CLI and API demo" width="700">
-</p>
-
 Installing the orla daemon:
 
 ```bash
