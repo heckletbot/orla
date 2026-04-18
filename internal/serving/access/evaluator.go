@@ -47,7 +47,7 @@ func (e *Evaluator) CheckAccess(tags map[string]string, resourceType ResourceTyp
 	typePrefix := string(resourceType) + ":"
 
 	for _, p := range e.store.List() {
-		if !matchesAny(tagStrings, p.Subjects) {
+		if !MatchesAny(tagStrings, p.Subjects) {
 			continue
 		}
 		// Check whether this policy targets the same resource type.
@@ -57,7 +57,7 @@ func (e *Evaluator) CheckAccess(tags map[string]string, resourceType ResourceTyp
 			subjectManagedForType = true
 		}
 
-		if !matchesAny([]string{resource}, p.Resources) {
+		if !MatchesAny([]string{resource}, p.Resources) {
 			continue
 		}
 		// Policy matches both subject and resource.
@@ -109,8 +109,8 @@ func tagsToStrings(tags map[string]string) []string {
 	return out
 }
 
-// matchesAny returns true if any value matches any pattern (glob).
-func matchesAny(values []string, patterns []string) bool {
+// MatchesAny returns true if any value matches any pattern (glob).
+func MatchesAny(values []string, patterns []string) bool {
 	for _, v := range values {
 		for _, p := range patterns {
 			matched, err := filepath.Match(p, v)

@@ -51,6 +51,16 @@ class AccessPolicy:
 
 
 @dataclass
+class SkillManifest:
+    """Capability manifest for an agent skill."""
+
+    name: str
+    requires_backends: list[str] = field(default_factory=list)
+    requires_tools: list[str] = field(default_factory=list)
+    requires_labels: list[str] = field(default_factory=list)
+
+
+@dataclass
 class SchedulingHints:
     """Optional hints for stage/request scheduling."""
 
@@ -112,6 +122,7 @@ class ExecuteRequest:
     accuracy_policy: str = ""
     tags: dict[str, str] = field(default_factory=dict)
     data_labels: list[str] = field(default_factory=list)
+    skill_id: str = ""
 
     def to_dict(self) -> dict:
         """Serialize to JSON-compatible dict, omitting None/empty values."""
@@ -174,6 +185,8 @@ class ExecuteRequest:
             d["tags"] = self.tags
         if self.data_labels:
             d["data_labels"] = self.data_labels
+        if self.skill_id:
+            d["skill_id"] = self.skill_id
         return d
 
 
@@ -246,3 +259,6 @@ EXECUTION_MODE_AGENT_LOOP = "agent_loop"
 # Access control action constants
 ACCESS_ACTION_ALLOW = "allow"
 ACCESS_ACTION_DENY = "deny"
+
+# Resource type constants
+RESOURCE_TYPE_SKILL = "skill"

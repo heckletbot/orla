@@ -24,6 +24,7 @@ const (
 	ResourceTypeBackend ResourceType = "backend"
 	ResourceTypeTool    ResourceType = "tool"
 	ResourceTypeData    ResourceType = "data"
+	ResourceTypeSkill   ResourceType = "skill"
 )
 
 // Policy is a single access control rule.

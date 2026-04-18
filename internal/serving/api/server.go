@@ -116,6 +116,10 @@ func (s *AgenticServer) registerRoutes(rateLimitRPS int) {
 	s.mux.HandleFunc("POST /api/v1/policies", s.handleAddPolicy)
 	s.mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
 	s.mux.HandleFunc("DELETE /api/v1/policies/{name}", s.handleRemovePolicy)
+
+	s.mux.HandleFunc("POST /api/v1/skills", s.handleRegisterSkill)
+	s.mux.HandleFunc("GET /api/v1/skills", s.handleListSkills)
+	s.mux.HandleFunc("DELETE /api/v1/skills/{name}", s.handleRemoveSkill)
 }
 
 // rateLimitMiddleware returns 429 when the limiter rejects the request.
@@ -163,6 +167,7 @@ type ExecuteRequest struct {
 	CachePolicy string            `json:"cache_policy,omitempty"`
 	Tags        map[string]string `json:"tags,omitempty"`
 	DataLabels  []string          `json:"data_labels,omitempty"`
+	SkillID     string            `json:"skill_id,omitempty"`
 }
 
 // ExecuteResponse is the response body for the execute endpoint.
@@ -224,6 +229,47 @@ func (s *AgenticServer) handleExecute(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+	}
+
+	// Skill access control enforcement.
+	if req.SkillID != "" {
+		manifest := s.layer.SkillRegistry.Get(req.SkillID)
+		if manifest == nil {
+			http.Error(w, fmt.Sprintf("skill %q not registered", req.SkillID), http.StatusBadRequest)
+			return
+		}
+
+		// 1. Visibility: can this invoker see the skill?
+		if len(req.Tags) > 0 {
+			if d := s.layer.CheckSkillAccess(req.Tags, req.SkillID); !d.Allowed {
+				http.Error(w, fmt.Sprintf("access denied to skill %q: %s", req.SkillID, d.Reason), http.StatusForbidden)
+				return
+			}
+		}
+
+		// 2. Capability envelope: manifest ∩ skill-policy ∩ invoker-policy.
+		if len(req.Tags) > 0 {
+			if d := s.layer.CheckSkillEnvelope(req.Tags, req.SkillID, manifest); !d.Allowed {
+				http.Error(w, fmt.Sprintf("skill %q envelope check failed: %s", req.SkillID, d.Reason), http.StatusForbidden)
+				return
+			}
+		}
+
+		// 3. Manifest bounds: request resources within declared manifest.
+		toolNames := make([]string, len(req.Tools))
+		for i, t := range req.Tools {
+			toolNames[i] = t.Name
+		}
+		if d := s.layer.CheckManifestBounds(manifest, req.Backend, toolNames, effectiveLabels); !d.Allowed {
+			http.Error(w, fmt.Sprintf("skill %q manifest violation: %s", req.SkillID, d.Reason), http.StatusForbidden)
+			return
+		}
+
+		// 4. Inject skill tag so existing checks pick up skill-scoped policies.
+		if req.Tags == nil {
+			req.Tags = make(map[string]string)
+		}
+		req.Tags["skill"] = req.SkillID
 	}
 
 	// Access control enforcement.
@@ -682,6 +728,74 @@ func (s *AgenticServer) handleRegisterWorkflow(w http.ResponseWriter, r *http.Re
 		zap.String("workflow_id", req.WorkflowID),
 		zap.Int("edges", len(edges)),
 		zap.Int("declassifications", len(req.Declassifications)))
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	core.WriteJSONResponse(w, map[string]bool{"success": true})
+}
+
+// ---- Skill registry endpoints ----
+
+// RegisterSkillRequest is the request body for registering a skill manifest.
+type RegisterSkillRequest struct {
+	Name             string   `json:"name"`
+	RequiresBackends []string `json:"requires_backends"`
+	RequiresTools    []string `json:"requires_tools,omitempty"`
+	RequiresLabels   []string `json:"requires_labels,omitempty"`
+}
+
+func (s *AgenticServer) handleRegisterSkill(w http.ResponseWriter, r *http.Request) {
+	body := http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	var req RegisterSkillRequest
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("failed to decode request: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	m := &core.SkillManifest{
+		Name:             req.Name,
+		RequiresBackends: req.RequiresBackends,
+		RequiresTools:    req.RequiresTools,
+		RequiresLabels:   req.RequiresLabels,
+	}
+	if err := s.layer.SkillRegistry.Register(m); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	zap.L().Info("Registered skill",
+		zap.String("name", m.Name),
+		zap.Strings("requires_backends", m.RequiresBackends))
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	core.WriteJSONResponse(w, map[string]bool{"success": true})
+}
+
+// ListSkillsResponse is the response body for listing skills.
+type ListSkillsResponse struct {
+	Skills []*core.SkillManifest `json:"skills"`
+}
+
+func (s *AgenticServer) handleListSkills(w http.ResponseWriter, r *http.Request) {
+	skills := s.layer.SkillRegistry.List()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	core.WriteJSONResponse(w, ListSkillsResponse{Skills: skills})
+}
+
+func (s *AgenticServer) handleRemoveSkill(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "skill name is required in URL path", http.StatusBadRequest)
+		return
+	}
+	if err := s.layer.SkillRegistry.Remove(name); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	zap.L().Info("Removed skill", zap.String("name", name))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

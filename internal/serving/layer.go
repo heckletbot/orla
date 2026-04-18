@@ -19,6 +19,7 @@ type AgenticLayer struct {
 	llmBackendManager *LLMBackendManager
 	MemoryManager     *memory.DefaultManager
 	WorkflowManager   *core.WorkflowManager
+	SkillRegistry     *core.SkillRegistry
 	PolicyStore       *access.Store
 	policyEvaluator   *access.Evaluator
 }
@@ -28,10 +29,12 @@ func NewAgenticLayer() *AgenticLayer {
 	wm := core.NewWorkflowManager()
 	mm := memory.NewDefaultManager(memory.DefaultManagerConfig{}, wm)
 	ps := access.NewStore()
+	sr := core.NewSkillRegistry()
 	return &AgenticLayer{
 		llmBackendManager: NewLLMBackendManager(mm),
 		MemoryManager:     mm,
 		WorkflowManager:   wm,
+		SkillRegistry:     sr,
 		PolicyStore:       ps,
 		policyEvaluator:   access.NewEvaluator(ps),
 	}
@@ -151,6 +154,76 @@ func (l *AgenticLayer) CheckDataAccess(tags map[string]string, backendName strin
 			return d
 		}
 	}
+	return access.Decision{Allowed: true}
+}
+
+// CheckSkillAccess checks whether the given tags permit invocation of the named skill.
+func (l *AgenticLayer) CheckSkillAccess(tags map[string]string, skillName string) access.Decision {
+	return l.policyEvaluator.CheckAccess(tags, access.ResourceTypeSkill, skillName)
+}
+
+// CheckSkillEnvelope verifies that the skill's manifest is within the intersection
+// of three bounds: the manifest itself, skill-scoped policies, and the invoker's policies.
+func (l *AgenticLayer) CheckSkillEnvelope(tags map[string]string, skillID string, manifest *core.SkillManifest) access.Decision {
+	// Build tags augmented with the skill identifier for skill-scoped policy matching.
+	skillTags := maps.Clone(tags)
+	skillTags["skill"] = skillID
+
+	// Check each required backend against invoker policies and skill-scoped policies.
+	for _, backend := range manifest.RequiresBackends {
+		if d := l.policyEvaluator.CheckAccess(tags, access.ResourceTypeBackend, backend); !d.Allowed {
+			return access.Decision{Allowed: false, Reason: fmt.Sprintf("invoker cannot access backend %q: %s", backend, d.Reason)}
+		}
+		if d := l.policyEvaluator.CheckAccess(skillTags, access.ResourceTypeBackend, backend); !d.Allowed {
+			return access.Decision{Allowed: false, Reason: fmt.Sprintf("skill-scoped policy denies backend %q: %s", backend, d.Reason)}
+		}
+	}
+
+	// Check each required tool.
+	for _, tool := range manifest.RequiresTools {
+		if d := l.policyEvaluator.CheckAccess(tags, access.ResourceTypeTool, tool); !d.Allowed {
+			return access.Decision{Allowed: false, Reason: fmt.Sprintf("invoker cannot access tool %q: %s", tool, d.Reason)}
+		}
+		if d := l.policyEvaluator.CheckAccess(skillTags, access.ResourceTypeTool, tool); !d.Allowed {
+			return access.Decision{Allowed: false, Reason: fmt.Sprintf("skill-scoped policy denies tool %q: %s", tool, d.Reason)}
+		}
+	}
+
+	// Check each required label against each required backend.
+	for _, label := range manifest.RequiresLabels {
+		for _, backend := range manifest.RequiresBackends {
+			backendTags := map[string]string{"backend": backend}
+			maps.Copy(backendTags, tags)
+			if d := l.policyEvaluator.CheckAccess(backendTags, access.ResourceTypeData, label); !d.Allowed {
+				return access.Decision{Allowed: false, Reason: fmt.Sprintf("data label %q denied for backend %q: %s", label, backend, d.Reason)}
+			}
+		}
+	}
+
+	return access.Decision{Allowed: true}
+}
+
+// CheckManifestBounds verifies that the actual request resources are within the skill's declared manifest.
+func (l *AgenticLayer) CheckManifestBounds(manifest *core.SkillManifest, backendName string, toolNames []string, dataLabels []string) access.Decision {
+	// Backend must be in the manifest.
+	if !access.MatchesAny([]string{backendName}, manifest.RequiresBackends) {
+		return access.Decision{Allowed: false, Reason: fmt.Sprintf("backend %q not in skill manifest", backendName)}
+	}
+
+	// Each tool must be in the manifest. Empty manifest means no tools allowed.
+	for _, tool := range toolNames {
+		if !access.MatchesAny([]string{tool}, manifest.RequiresTools) {
+			return access.Decision{Allowed: false, Reason: fmt.Sprintf("tool %q not in skill manifest", tool)}
+		}
+	}
+
+	// Each data label must be in the manifest. Empty manifest means no labeled data allowed.
+	for _, label := range dataLabels {
+		if !access.MatchesAny([]string{label}, manifest.RequiresLabels) {
+			return access.Decision{Allowed: false, Reason: fmt.Sprintf("data label %q not in skill manifest", label)}
+		}
+	}
+
 	return access.Decision{Allowed: true}
 }
 
