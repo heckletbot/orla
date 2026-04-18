@@ -180,6 +180,87 @@ paths:
         "404":
           description: Policy not found
 
+  /api/v1/skills:
+    post:
+      summary: Register skill
+      description: Register a skill manifest declaring what the skill requires.
+      operationId: registerSkill
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterSkillRequest"
+      responses:
+        "200":
+          description: Skill registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        "400":
+          description: Validation error
+    get:
+      summary: List skills
+      operationId: listSkills
+      responses:
+        "200":
+          description: All registered skills
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListSkillsResponse"
+
+  /api/v1/skills/{name}:
+    delete:
+      summary: Remove skill
+      operationId: removeSkill
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Skill removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        "404":
+          description: Skill not found
+
+  /api/v1/access/check:
+    post:
+      summary: Validate access control
+      description: >
+        Check access control policies without executing inference. Agents that
+        manage their own inference can use this to validate permissions before
+        making calls.
+      operationId: accessCheck
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessCheckRequest"
+      responses:
+        "200":
+          description: Access check result (always 200, check the allowed field)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessCheckResponse"
+        "400":
+          description: Missing tags
+
   /api/v1/workflows:
     post:
       summary: Register workflow DAG
@@ -334,6 +415,11 @@ components:
           description: >
             Sensitivity labels on this request (e.g. ["pii"]).
             Checked against data access control policies.
+        skill_id:
+          type: string
+          description: >
+            Skill identifier. When set, the daemon validates the request
+            against the skill's manifest and applies skill-scoped policies.
 
     Message:
       type: object
@@ -606,3 +692,89 @@ components:
                 items:
                   type: string
           description: Stages that strip specific labels from propagation
+
+    RegisterSkillRequest:
+      type: object
+      required: [name, requires_backends]
+      properties:
+        name:
+          type: string
+          description: Unique skill identifier
+        requires_backends:
+          type: array
+          items:
+            type: string
+          description: Backend name patterns the skill needs
+        requires_tools:
+          type: array
+          items:
+            type: string
+          description: Tool name patterns the skill needs
+        requires_labels:
+          type: array
+          items:
+            type: string
+          description: Data labels the skill may process
+
+    SkillManifest:
+      type: object
+      properties:
+        name:
+          type: string
+        requires_backends:
+          type: array
+          items:
+            type: string
+        requires_tools:
+          type: array
+          items:
+            type: string
+        requires_labels:
+          type: array
+          items:
+            type: string
+
+    ListSkillsResponse:
+      type: object
+      required: [skills]
+      properties:
+        skills:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillManifest"
+
+    AccessCheckRequest:
+      type: object
+      required: [tags]
+      properties:
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+          description: Caller identity tags
+        backend:
+          type: string
+          description: Backend to check access for
+        tools:
+          type: array
+          items:
+            type: string
+          description: Tool names to check access for
+        data_labels:
+          type: array
+          items:
+            type: string
+          description: Data labels to check access for
+        skill_id:
+          type: string
+          description: Skill to check visibility and envelope for
+
+    AccessCheckResponse:
+      type: object
+      required: [allowed]
+      properties:
+        allowed:
+          type: boolean
+        reason:
+          type: string
+          description: Denial reason (empty when allowed)

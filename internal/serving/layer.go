@@ -157,6 +157,11 @@ func (l *AgenticLayer) CheckDataAccess(tags map[string]string, backendName strin
 	return access.Decision{Allowed: true}
 }
 
+// CheckToolAccessByName checks whether the given tags permit a single tool by name.
+func (l *AgenticLayer) CheckToolAccessByName(tags map[string]string, toolName string) access.Decision {
+	return l.policyEvaluator.CheckAccess(tags, access.ResourceTypeTool, toolName)
+}
+
 // CheckSkillAccess checks whether the given tags permit invocation of the named skill.
 func (l *AgenticLayer) CheckSkillAccess(tags map[string]string, skillName string) access.Decision {
 	return l.policyEvaluator.CheckAccess(tags, access.ResourceTypeSkill, skillName)
@@ -225,6 +230,69 @@ func (l *AgenticLayer) CheckManifestBounds(manifest *core.SkillManifest, backend
 	}
 
 	return access.Decision{Allowed: true}
+}
+
+// ValidateAccess runs all access control checks for a request and returns the
+// first denial, or an allowed decision if everything passes. Both handleExecute
+// and handleAccessCheck call this method.
+//
+// If skillID is non-empty, the skill must be registered. The method performs
+// skill visibility, envelope, and manifest bounds checks before the standard
+// backend/tool/data checks. On success with a skill, the returned tags map
+// includes the injected "skill" tag for downstream policy matching.
+func (l *AgenticLayer) ValidateAccess(
+	tags map[string]string,
+	backend string,
+	toolNames []string,
+	dataLabels []string,
+	skillID string,
+) (access.Decision, map[string]string) {
+	// Skill checks.
+	if skillID != "" {
+		manifest := l.SkillRegistry.Get(skillID)
+		if manifest == nil {
+			return access.Decision{Allowed: false, Reason: fmt.Sprintf("skill %q not registered", skillID)}, tags
+		}
+		if len(tags) > 0 {
+			if d := l.CheckSkillAccess(tags, skillID); !d.Allowed {
+				return access.Decision{Allowed: false, Reason: fmt.Sprintf("access denied to skill %q: %s", skillID, d.Reason)}, tags
+			}
+			if d := l.CheckSkillEnvelope(tags, skillID, manifest); !d.Allowed {
+				return access.Decision{Allowed: false, Reason: fmt.Sprintf("skill %q envelope check failed: %s", skillID, d.Reason)}, tags
+			}
+		}
+		if d := l.CheckManifestBounds(manifest, backend, toolNames, dataLabels); !d.Allowed {
+			return access.Decision{Allowed: false, Reason: fmt.Sprintf("skill %q manifest violation: %s", skillID, d.Reason)}, tags
+		}
+		// Inject skill tag for downstream policy matching.
+		if tags != nil {
+			tags = maps.Clone(tags)
+			tags["skill"] = skillID
+		}
+	}
+
+	// Backend check.
+	if backend != "" {
+		if d := l.CheckBackendAccess(tags, backend); !d.Allowed {
+			return access.Decision{Allowed: false, Reason: fmt.Sprintf("access denied to backend %q: %s", backend, d.Reason)}, tags
+		}
+	}
+
+	// Tool checks.
+	for _, tool := range toolNames {
+		if d := l.CheckToolAccessByName(tags, tool); !d.Allowed {
+			return access.Decision{Allowed: false, Reason: fmt.Sprintf("tool access denied: %s", d.Reason)}, tags
+		}
+	}
+
+	// Data label checks.
+	if backend != "" && len(dataLabels) > 0 {
+		if d := l.CheckDataAccess(tags, backend, dataLabels); !d.Allowed {
+			return access.Decision{Allowed: false, Reason: fmt.Sprintf("data access denied for backend %q: %s", backend, d.Reason)}, tags
+		}
+	}
+
+	return access.Decision{Allowed: true}, tags
 }
 
 // StartPressureMonitor launches the background memory pressure polling loop.

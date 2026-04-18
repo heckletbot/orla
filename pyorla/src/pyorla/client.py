@@ -201,6 +201,61 @@ class OrlaClient:
         await _araise_http(resp)
 
     # ------------------------------------------------------------------
+    # Access validation
+    # ------------------------------------------------------------------
+
+    def check_access(
+        self,
+        tags: dict[str, str],
+        *,
+        backend: str = "",
+        tools: list[str] | None = None,
+        data_labels: list[str] | None = None,
+        skill_id: str = "",
+    ) -> tuple[bool, str]:
+        """Check access control policies without executing inference.
+
+        Returns (allowed, reason). If allowed is False, reason describes
+        the denial.
+        """
+        payload: dict[str, Any] = {"tags": tags}
+        if backend:
+            payload["backend"] = backend
+        if tools:
+            payload["tools"] = tools
+        if data_labels:
+            payload["data_labels"] = data_labels
+        if skill_id:
+            payload["skill_id"] = skill_id
+        resp = self._sync.post("/api/v1/access/check", json=payload)
+        _raise_http(resp)
+        data = resp.json()
+        return data.get("allowed", False), data.get("reason", "")
+
+    async def acheck_access(
+        self,
+        tags: dict[str, str],
+        *,
+        backend: str = "",
+        tools: list[str] | None = None,
+        data_labels: list[str] | None = None,
+        skill_id: str = "",
+    ) -> tuple[bool, str]:
+        payload: dict[str, Any] = {"tags": tags}
+        if backend:
+            payload["backend"] = backend
+        if tools:
+            payload["tools"] = tools
+        if data_labels:
+            payload["data_labels"] = data_labels
+        if skill_id:
+            payload["skill_id"] = skill_id
+        resp = await self._async.post("/api/v1/access/check", json=payload)
+        await _araise_http(resp)
+        data = resp.json()
+        return data.get("allowed", False), data.get("reason", "")
+
+    # ------------------------------------------------------------------
     # Skill registry
     # ------------------------------------------------------------------
 

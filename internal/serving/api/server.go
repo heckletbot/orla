@@ -120,6 +120,8 @@ func (s *AgenticServer) registerRoutes(rateLimitRPS int) {
 	s.mux.HandleFunc("POST /api/v1/skills", s.handleRegisterSkill)
 	s.mux.HandleFunc("GET /api/v1/skills", s.handleListSkills)
 	s.mux.HandleFunc("DELETE /api/v1/skills/{name}", s.handleRemoveSkill)
+
+	s.mux.HandleFunc("POST /api/v1/access/check", s.handleAccessCheck)
 }
 
 // rateLimitMiddleware returns 429 when the limiter rejects the request.
@@ -231,69 +233,28 @@ func (s *AgenticServer) handleExecute(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Skill access control enforcement.
-	if req.SkillID != "" {
-		manifest := s.layer.SkillRegistry.Get(req.SkillID)
-		if manifest == nil {
-			http.Error(w, fmt.Sprintf("skill %q not registered", req.SkillID), http.StatusBadRequest)
-			return
-		}
-
-		// 1. Visibility: can this invoker see the skill?
-		if len(req.Tags) > 0 {
-			if d := s.layer.CheckSkillAccess(req.Tags, req.SkillID); !d.Allowed {
-				http.Error(w, fmt.Sprintf("access denied to skill %q: %s", req.SkillID, d.Reason), http.StatusForbidden)
-				return
-			}
-		}
-
-		// 2. Capability envelope: manifest ∩ skill-policy ∩ invoker-policy.
-		if len(req.Tags) > 0 {
-			if d := s.layer.CheckSkillEnvelope(req.Tags, req.SkillID, manifest); !d.Allowed {
-				http.Error(w, fmt.Sprintf("skill %q envelope check failed: %s", req.SkillID, d.Reason), http.StatusForbidden)
-				return
-			}
-		}
-
-		// 3. Manifest bounds: request resources within declared manifest.
+	// Access control enforcement (skill + backend + tool + data).
+	if len(req.Tags) > 0 {
 		toolNames := make([]string, len(req.Tools))
 		for i, t := range req.Tools {
 			toolNames[i] = t.Name
 		}
-		if d := s.layer.CheckManifestBounds(manifest, req.Backend, toolNames, effectiveLabels); !d.Allowed {
-			http.Error(w, fmt.Sprintf("skill %q manifest violation: %s", req.SkillID, d.Reason), http.StatusForbidden)
+		d, updatedTags := s.layer.ValidateAccess(req.Tags, req.Backend, toolNames, effectiveLabels, req.SkillID)
+		if !d.Allowed {
+			http.Error(w, d.Reason, http.StatusForbidden)
 			return
 		}
-
-		// 4. Inject skill tag so existing checks pick up skill-scoped policies.
-		if req.Tags == nil {
-			req.Tags = make(map[string]string)
+		req.Tags = updatedTags
+	} else if req.SkillID != "" {
+		// Skill specified without tags — still need manifest bounds check.
+		toolNames := make([]string, len(req.Tools))
+		for i, t := range req.Tools {
+			toolNames[i] = t.Name
 		}
-		req.Tags["skill"] = req.SkillID
-	}
-
-	// Access control enforcement.
-	if len(req.Tags) > 0 {
-		// Check LLM backend access.
-		if d := s.layer.CheckBackendAccess(req.Tags, req.Backend); !d.Allowed {
-			http.Error(w, fmt.Sprintf("access denied to backend %q: %s", req.Backend, d.Reason), http.StatusForbidden)
+		d, _ := s.layer.ValidateAccess(nil, req.Backend, toolNames, effectiveLabels, req.SkillID)
+		if !d.Allowed {
+			http.Error(w, d.Reason, http.StatusForbidden)
 			return
-		}
-
-		// Check tool access.
-		if len(req.Tools) > 0 {
-			if d := s.layer.CheckToolAccess(req.Tags, req.Tools); !d.Allowed {
-				http.Error(w, fmt.Sprintf("tool access denied: %s", d.Reason), http.StatusForbidden)
-				return
-			}
-		}
-
-		// Check data label access (using effective labels from DAG propagation).
-		if len(effectiveLabels) > 0 {
-			if d := s.layer.CheckDataAccess(req.Tags, req.Backend, effectiveLabels); !d.Allowed {
-				http.Error(w, fmt.Sprintf("data access denied for backend %q: %s", req.Backend, d.Reason), http.StatusForbidden)
-				return
-			}
 		}
 	}
 
@@ -671,8 +632,8 @@ func (s *AgenticServer) handleRemovePolicy(w http.ResponseWriter, r *http.Reques
 
 // RegisterWorkflowRequest is the request body for registering a workflow DAG.
 type RegisterWorkflowRequest struct {
-	WorkflowID       string                        `json:"workflow_id"`
-	Edges            []WorkflowEdgeEntry            `json:"edges"`
+	WorkflowID        string                          `json:"workflow_id"`
+	Edges             []WorkflowEdgeEntry             `json:"edges"`
 	Declassifications []WorkflowDeclassificationEntry `json:"declassifications,omitempty"`
 }
 
@@ -800,4 +761,39 @@ func (s *AgenticServer) handleRemoveSkill(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	core.WriteJSONResponse(w, map[string]bool{"success": true})
+}
+
+// AccessCheckRequest is the request body for the access validation endpoint.
+// Agents that manage their own inference can use this to check policies without executing.
+type AccessCheckRequest struct {
+	Tags       map[string]string `json:"tags"`
+	Backend    string            `json:"backend,omitempty"`
+	Tools      []string          `json:"tools,omitempty"`
+	DataLabels []string          `json:"data_labels,omitempty"`
+	SkillID    string            `json:"skill_id,omitempty"`
+}
+
+// AccessCheckResponse is the response body for the access validation endpoint.
+type AccessCheckResponse struct {
+	Allowed bool   `json:"allowed"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+func (s *AgenticServer) handleAccessCheck(w http.ResponseWriter, r *http.Request) {
+	body := http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	var req AccessCheckRequest
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("failed to decode request: %v", err), http.StatusBadRequest)
+		return
+	}
+	if len(req.Tags) == 0 {
+		http.Error(w, "tags are required", http.StatusBadRequest)
+		return
+	}
+
+	d, _ := s.layer.ValidateAccess(req.Tags, req.Backend, req.Tools, req.DataLabels, req.SkillID)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	core.WriteJSONResponse(w, AccessCheckResponse{Allowed: d.Allowed, Reason: d.Reason})
 }

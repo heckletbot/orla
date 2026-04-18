@@ -9,6 +9,7 @@ import (
 
 	"github.com/harvard-cns/orla/internal/core"
 	"github.com/harvard-cns/orla/internal/model"
+	"github.com/harvard-cns/orla/internal/serving/access"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -120,4 +121,135 @@ func TestLayer_ExecuteStream(t *testing.T) {
 	for range ch {
 	}
 	assert.Equal(t, "test response", response.Content)
+}
+
+// ---- ValidateAccess tests ----
+
+func TestValidateAccess_NoTagsNoSkill(t *testing.T) {
+	layer := NewAgenticLayer()
+	d, _ := layer.ValidateAccess(nil, "cheap", nil, nil, "")
+	assert.True(t, d.Allowed)
+}
+
+func TestValidateAccess_BackendAllowed(t *testing.T) {
+	layer := NewAgenticLayer()
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name: "eng-allow", Subjects: []string{"tenant:engineering"}, Resources: []string{"backend:cheap"}, Action: access.ActionAllow,
+	}))
+	d, _ := layer.ValidateAccess(map[string]string{"tenant": "engineering"}, "cheap", nil, nil, "")
+	assert.True(t, d.Allowed)
+}
+
+func TestValidateAccess_BackendDenied(t *testing.T) {
+	layer := NewAgenticLayer()
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name: "intern-allow-cheap", Subjects: []string{"tenant:interns"}, Resources: []string{"backend:cheap"}, Action: access.ActionAllow,
+	}))
+	d, _ := layer.ValidateAccess(map[string]string{"tenant": "interns"}, "strong", nil, nil, "")
+	assert.False(t, d.Allowed)
+	assert.Contains(t, d.Reason, "backend")
+}
+
+func TestValidateAccess_ToolDenied(t *testing.T) {
+	layer := NewAgenticLayer()
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name: "allow-tools", Subjects: []string{"tenant:eng"}, Resources: []string{"tool:*"}, Action: access.ActionAllow,
+	}))
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name: "deny-shell", Subjects: []string{"tenant:eng"}, Resources: []string{"tool:shell"}, Action: access.ActionDeny,
+	}))
+	d, _ := layer.ValidateAccess(map[string]string{"tenant": "eng"}, "", []string{"shell"}, nil, "")
+	assert.False(t, d.Allowed)
+	assert.Contains(t, d.Reason, "tool")
+}
+
+func TestValidateAccess_DataLabelDenied(t *testing.T) {
+	layer := NewAgenticLayer()
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name: "pii-deny", Subjects: []string{"backend:ext"}, Resources: []string{"data:pii"}, Action: access.ActionDeny,
+	}))
+	d, _ := layer.ValidateAccess(map[string]string{"tenant": "hr"}, "ext", nil, []string{"pii"}, "")
+	assert.False(t, d.Allowed)
+	assert.Contains(t, d.Reason, "data access denied")
+}
+
+func TestValidateAccess_SkillNotRegistered(t *testing.T) {
+	layer := NewAgenticLayer()
+	d, _ := layer.ValidateAccess(map[string]string{"tenant": "eng"}, "cheap", nil, nil, "nonexistent")
+	assert.False(t, d.Allowed)
+	assert.Contains(t, d.Reason, "not registered")
+}
+
+func TestValidateAccess_SkillEnvelopeDenied(t *testing.T) {
+	layer := NewAgenticLayer()
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name: "intern-cheap", Subjects: []string{"tenant:interns"}, Resources: []string{"backend:cheap"}, Action: access.ActionAllow,
+	}))
+	require.NoError(t, layer.SkillRegistry.Register(&core.SkillManifest{
+		Name: "big", RequiresBackends: []string{"cheap", "strong"},
+	}))
+	d, _ := layer.ValidateAccess(map[string]string{"tenant": "interns"}, "cheap", nil, nil, "big")
+	assert.False(t, d.Allowed)
+	assert.Contains(t, d.Reason, "envelope")
+}
+
+func TestValidateAccess_SkillManifestViolation(t *testing.T) {
+	layer := NewAgenticLayer()
+	require.NoError(t, layer.SkillRegistry.Register(&core.SkillManifest{
+		Name: "cheap-only", RequiresBackends: []string{"cheap"},
+	}))
+	d, _ := layer.ValidateAccess(nil, "strong", nil, nil, "cheap-only")
+	assert.False(t, d.Allowed)
+	assert.Contains(t, d.Reason, "manifest violation")
+}
+
+func TestValidateAccess_SkillTagInjected(t *testing.T) {
+	layer := NewAgenticLayer()
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name: "eng-all", Subjects: []string{"tenant:engineering"}, Resources: []string{"backend:*"}, Action: access.ActionAllow,
+	}))
+	require.NoError(t, layer.SkillRegistry.Register(&core.SkillManifest{
+		Name: "summarize", RequiresBackends: []string{"cheap"},
+	}))
+	d, tags := layer.ValidateAccess(map[string]string{"tenant": "engineering"}, "cheap", nil, nil, "summarize")
+	assert.True(t, d.Allowed)
+	assert.Equal(t, "summarize", tags["skill"])
+}
+
+func TestValidateAccess_SkillScopedPolicyDeniesBackend(t *testing.T) {
+	layer := NewAgenticLayer()
+	// Engineering can use all backends.
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name: "eng-all", Subjects: []string{"tenant:engineering"}, Resources: []string{"backend:*"}, Action: access.ActionAllow,
+	}))
+	// Skill-scoped: summarize skills cannot use strong.
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name: "skill-no-strong", Subjects: []string{"skill:summarize"}, Resources: []string{"backend:strong"}, Action: access.ActionDeny,
+	}))
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name: "skill-allow-backends", Subjects: []string{"skill:*"}, Resources: []string{"backend:*"}, Action: access.ActionAllow,
+	}))
+	require.NoError(t, layer.SkillRegistry.Register(&core.SkillManifest{
+		Name: "summarize", RequiresBackends: []string{"cheap", "strong"},
+	}))
+	// Envelope check: skill-scoped policy denies strong for summarize.
+	d, _ := layer.ValidateAccess(map[string]string{"tenant": "engineering"}, "cheap", nil, nil, "summarize")
+	assert.False(t, d.Allowed)
+	assert.Contains(t, d.Reason, "skill-scoped policy denies backend")
+}
+
+func TestValidateAccess_HappyPath(t *testing.T) {
+	layer := NewAgenticLayer()
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name: "eng-all", Subjects: []string{"tenant:engineering"}, Resources: []string{"backend:*"}, Action: access.ActionAllow,
+	}))
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name: "eng-skill", Subjects: []string{"tenant:engineering"}, Resources: []string{"skill:summarize"}, Action: access.ActionAllow,
+	}))
+	require.NoError(t, layer.SkillRegistry.Register(&core.SkillManifest{
+		Name: "summarize", RequiresBackends: []string{"cheap"},
+	}))
+	d, tags := layer.ValidateAccess(map[string]string{"tenant": "engineering"}, "cheap", nil, nil, "summarize")
+	assert.True(t, d.Allowed)
+	assert.Equal(t, "summarize", tags["skill"])
 }

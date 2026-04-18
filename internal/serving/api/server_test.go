@@ -689,7 +689,7 @@ func TestServer_HandleExecute_SkillNotRegistered(t *testing.T) {
 	require.NoError(t, err)
 	resp := httptest.NewRecorder()
 	server.mux.ServeHTTP(resp, httptest.NewRequest("POST", "/api/v1/execute", bytes.NewReader(body)))
-	require.Equal(t, http.StatusBadRequest, resp.Code)
+	require.Equal(t, http.StatusForbidden, resp.Code)
 	assert.Contains(t, resp.Body.String(), "not registered")
 }
 
@@ -822,6 +822,71 @@ func TestServer_HandleRegisterWorkflow_MissingID(t *testing.T) {
 	resp := httptest.NewRecorder()
 	server.mux.ServeHTTP(resp, httptest.NewRequest("POST", "/api/v1/workflows", bytes.NewReader(wfBody)))
 	require.Equal(t, http.StatusBadRequest, resp.Code)
+}
+
+func TestServer_HandleAccessCheck_Allowed(t *testing.T) {
+	layer := serving.NewAgenticLayer()
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name: "eng-allow-cheap", Subjects: []string{"tenant:engineering"}, Resources: []string{"backend:cheap"}, Action: access.ActionAllow,
+	}))
+	server := NewAgenticServer(layer, ":0", nil)
+
+	body, err := json.Marshal(AccessCheckRequest{
+		Tags:    map[string]string{"tenant": "engineering"},
+		Backend: "cheap",
+	})
+	require.NoError(t, err)
+	resp := httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("POST", "/api/v1/access/check", bytes.NewReader(body)))
+	require.Equal(t, http.StatusOK, resp.Code)
+	var result AccessCheckResponse
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &result))
+	assert.True(t, result.Allowed)
+}
+
+func TestServer_HandleAccessCheck_Denied(t *testing.T) {
+	layer := serving.NewAgenticLayer()
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name: "intern-allow-cheap", Subjects: []string{"tenant:interns"}, Resources: []string{"backend:cheap"}, Action: access.ActionAllow,
+	}))
+	server := NewAgenticServer(layer, ":0", nil)
+
+	body, err := json.Marshal(AccessCheckRequest{
+		Tags:    map[string]string{"tenant": "interns"},
+		Backend: "strong",
+	})
+	require.NoError(t, err)
+	resp := httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("POST", "/api/v1/access/check", bytes.NewReader(body)))
+	require.Equal(t, http.StatusOK, resp.Code)
+	var result AccessCheckResponse
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &result))
+	assert.False(t, result.Allowed)
+	assert.Contains(t, result.Reason, "no allow policy")
+}
+
+func TestServer_HandleAccessCheck_SkillEnvelope(t *testing.T) {
+	layer := serving.NewAgenticLayer()
+	require.NoError(t, layer.PolicyStore.Add(&access.Policy{
+		Name: "intern-allow-cheap", Subjects: []string{"tenant:interns"}, Resources: []string{"backend:cheap"}, Action: access.ActionAllow,
+	}))
+	require.NoError(t, layer.SkillRegistry.Register(&core.SkillManifest{
+		Name: "big-skill", RequiresBackends: []string{"cheap", "strong"},
+	}))
+	server := NewAgenticServer(layer, ":0", nil)
+
+	body, err := json.Marshal(AccessCheckRequest{
+		Tags:    map[string]string{"tenant": "interns"},
+		SkillID: "big-skill",
+	})
+	require.NoError(t, err)
+	resp := httptest.NewRecorder()
+	server.mux.ServeHTTP(resp, httptest.NewRequest("POST", "/api/v1/access/check", bytes.NewReader(body)))
+	require.Equal(t, http.StatusOK, resp.Code)
+	var result AccessCheckResponse
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &result))
+	assert.False(t, result.Allowed)
+	assert.Contains(t, result.Reason, "invoker cannot access backend")
 }
 
 func TestServer_HandleExecute_DataLabelPropagation(t *testing.T) {
