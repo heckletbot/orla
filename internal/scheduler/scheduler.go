@@ -1,14 +1,14 @@
 // Package scheduler owns one FCFS executor per registered backend.
 //
-// The scheduler does not implement fairness in v1: requests arrive,
-// each backend's executor either has a free worker slot (dispatch
-// immediately) or doesn't (queue, waiting on a slot). The concurrency
-// cap is enforced per-backend per-instance via a buffered channel
-// sized to backend.max_concurrency.
+// Requests arrive at a backend's executor and dispatch immediately if
+// a worker slot is free. If not, they queue until one is released.
+// The concurrency cap is enforced per backend per instance with a
+// buffered channel sized to backend.max_concurrency. Fairness across
+// tenants or workflows is not implemented.
 //
 // Streaming and non-streaming requests both consume one slot. The
-// caller holds the slot until the response (or stream) is fully
-// delivered, see Acquire.
+// caller holds the slot until the response or stream is fully
+// delivered. See Acquire.
 package scheduler
 
 import (
@@ -31,12 +31,12 @@ import (
 // with a backend name not currently registered.
 var ErrUnknownBackend = errors.New("scheduler: unknown backend")
 
-// ProviderFactory constructs a provider for a backend, returning the
-// kind-agnostic Backend interface. The caller (or the scheduler's
-// typed accessors) downcasts to LLMProvider or ToolProvider based on
+// ProviderFactory constructs a provider for a backend and returns
+// the kind-agnostic Backend interface. The caller, or the scheduler's
+// typed accessors, downcasts to LLMProvider or ToolProvider based on
 // backend.Kind. The serve command's factory branches by Kind to
-// return either provider.NewOpenAI (for KindLLM) or
-// structurepred.New (for KindTool, ToolKind == "structure-prediction").
+// return provider.NewOpenAI for KindLLM, or structurepred.New for
+// KindTool with ToolKind "structure-prediction".
 type ProviderFactory func(b *backends.Backend) provider.Backend
 
 // ReleaseFunc returns a slot back to the executor. Always call it,

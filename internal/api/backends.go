@@ -10,8 +10,8 @@ import (
 )
 
 // BackendLifecycle is the subset of scheduler.Scheduler the backend
-// handlers call to keep the runtime in sync with the registry.
-// Optional, pass nil in tests that don't exercise dispatch.
+// handlers call to keep the runtime in sync with the registry. Pass
+// nil in tests that don't exercise dispatch.
 type BackendLifecycle interface {
 	Register(b *backends.Backend)
 	Deregister(name string)
@@ -25,14 +25,14 @@ type BackendDeps struct {
 
 // RegisterBackendRoutes mounts the backend endpoints onto r. Routes:
 //
-//	POST   /api/v1/backends         (create, name in body)
-//	GET    /api/v1/backends         (list)
-//	GET    /api/v1/backends/{name}
-//	PATCH  /api/v1/backends/{name}
-//	DELETE /api/v1/backends/{name}
+//	POST   /api/v1/backends         create with name in the body
+//	GET    /api/v1/backends         list
+//	GET    /api/v1/backends/{name}  read one
+//	PATCH  /api/v1/backends/{name}  partial update
+//	DELETE /api/v1/backends/{name}  remove
 //
-// There is no PUT, backends are explicitly created with POST. To change
-// immutable fields (name, model_id), delete and re-create.
+// There is no PUT. Backends are created with POST. To change name or
+// model_id, delete and re-create.
 func RegisterBackendRoutes(r chi.Router, deps BackendDeps) {
 	h := &backendHandler{deps: deps}
 	r.Route("/api/v1/backends", func(r chi.Router) {
@@ -50,12 +50,12 @@ type backendHandler struct {
 	deps BackendDeps
 }
 
-// createRequest is the POST wire shape. name lives in the body for
-// symmetry with how the daemon's own RegisterBackend invocations look;
-// otherwise we'd need a sub-resource collection trick.
+// createRequest is the POST wire shape. Name lives in the body for
+// symmetry with the daemon's own RegisterBackend calls. Otherwise
+// we would need a sub-resource collection trick.
 //
-// Kind defaults to "llm" when omitted. For "llm", ModelID is required;
-// for "tool", ToolKind is required.
+// Kind defaults to "llm" when omitted. For "llm" backends, ModelID is
+// required. For "tool" backends, ToolKind is required.
 type createRequest struct {
 	Name                string   `json:"name"`
 	Kind                string   `json:"kind,omitempty"`

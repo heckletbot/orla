@@ -32,7 +32,8 @@ type Registry interface {
 	List(ctx context.Context) ([]*Stage, error)
 
 	// Replace performs a full upsert. All scalar fields are replaced
-	// with the supplied values, Labels is fully overwritten (no merge).
+	// with the supplied values. Labels is fully overwritten with no
+	// merge against the existing row.
 	Replace(ctx context.Context, s *Stage) (*Stage, error)
 
 	// Patch applies a partial update: nil pointers and nil maps in

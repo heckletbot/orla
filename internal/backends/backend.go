@@ -1,8 +1,10 @@
-// Package backends owns the LLM-or-tool backend record (endpoint,
-// model id / tool kind, concurrency cap, cost/quality priors) and the
-// registry that persists it. Backends are explicitly registered by
-// the platform engineer, the proxy refuses to dispatch to an unknown
-// backend.
+// Package backends owns the backend record and the registry that
+// persists it. A backend record carries everything orla needs to
+// route a request: endpoint, model id or tool kind, concurrency cap,
+// rate limit, and cost and quality priors.
+//
+// Backends are explicitly registered by the platform engineer. The
+// proxy refuses to dispatch to an unknown backend.
 package backends
 
 import "time"
@@ -16,7 +18,7 @@ import "time"
 //   - KindTool is any non-LLM backend such as a structure-prediction
 //     service, a docking engine, or an external HTTP API. Cost comes
 //     from the generic Rates map, with the tool reporting matching
-//     usage at dispatch time. ToolKind is required, ModelID is unused.
+//     usage at dispatch time. ToolKind is required. ModelID is unused.
 type Kind string
 
 const (
@@ -78,8 +80,7 @@ type Backend struct {
 
 // PatchRequest describes a partial update. nil pointers leave the
 // corresponding field unchanged. Name, Kind, ModelID, and ToolKind
-// cannot be patched, to change them, delete and re-create the
-// backend.
+// cannot be patched. To change them, delete and re-create the backend.
 type PatchRequest struct {
 	Endpoint            *string            `json:"endpoint,omitempty"`
 	APIKeyEnvVar        *string            `json:"api_key_env_var,omitempty"`

@@ -1,10 +1,10 @@
-// Package config loads the orla daemon configuration from environment
-// variables (prefixed with ORLA_).
+// Package config loads the orla daemon configuration from
+// environment variables prefixed with ORLA_.
 //
 // Every option has a sensible default except DATABASE_URL, which is
-// required. There is no YAML config file in v1, env vars are the single
-// source of truth so containerized deployments work without a sidecar
-// config file.
+// required. There is no YAML config file. Environment variables are
+// the single source of truth so containerized deployments work
+// without a sidecar config file.
 package config
 
 import (
@@ -17,8 +17,8 @@ import (
 // EnvPrefix is the prefix applied to every env var bound to Config.
 const EnvPrefix = "ORLA_"
 
-// Config is the full daemon configuration. Defaults live in the struct
-// tags, precedence is env var > default.
+// Config is the full daemon configuration. Defaults live in the
+// struct tags. Environment variables take precedence over defaults.
 type Config struct {
 	// DatabaseURL is the Postgres connection URL. Required.
 	DatabaseURL string `env:"DATABASE_URL, required"`

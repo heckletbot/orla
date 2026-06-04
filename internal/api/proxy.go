@@ -20,8 +20,8 @@ import (
 	"github.com/harvard-cns/orla/internal/telemetry"
 )
 
-// Header names. Lowercased on lookup, chi/net.http normalize incoming
-// headers to canonical case so we can compare via Get().
+// Header names. Lookups are case-insensitive because chi and net/http
+// normalize incoming headers to canonical case.
 const (
 	HeaderStage       = "X-Orla-Stage"
 	HeaderWorkflowRun = "X-Orla-Workflow-Run"

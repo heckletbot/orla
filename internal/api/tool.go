@@ -1,11 +1,11 @@
 // Tool HTTP route: POST /v1/tools/{kind}
 //
-// The wire shape mirrors the OpenAI-compatible chat path's role of
-// "developer hands orla a request, orla routes by stage, records
-// completion + cost, returns the response". For tool dispatches the
-// request and response are kind-specific JSON payloads, orla is
-// agnostic to their shapes, it just routes, accounts, and feeds
-// the mapper.
+// The wire shape mirrors the OpenAI-compatible chat path. The developer
+// hands orla a request. Orla routes by stage, records the completion
+// with its cost, and returns the response. For tool dispatches the
+// request and response are kind-specific JSON payloads. Orla stays
+// agnostic to their shapes and only routes, accounts, and feeds the
+// mapper.
 
 package api
 
@@ -46,15 +46,15 @@ type toolHandler struct {
 	deps ToolDeps
 }
 
-// invoke is the POST /v1/tools/{kind} handler. Flow:
+// invoke is the POST /v1/tools/{kind} handler. The flow is:
 //
-//   1. Parse the URL kind + extract request context (stage, tags).
-//   2. Resolve the stage to a backend via the stages registry.
-//   3. Look up the backend record (need its Kind + cost rate).
-//   4. Verify backend.Kind == "tool" and backend.ToolKind == URL kind.
-//   5. Acquire a worker slot via the scheduler (concurrency cap + rate limit).
-//   6. Decode the body into a provider.ToolRequest and dispatch.
-//   7. Record completion + emit metrics + return the response.
+//  1. Parse the URL kind and extract the request context.
+//  2. Resolve the stage to a backend via the stages registry.
+//  3. Look up the backend record to read its Kind and rates.
+//  4. Verify backend.Kind is "tool" and backend.ToolKind matches the URL.
+//  5. Acquire a worker slot via the scheduler.
+//  6. Decode the body into a provider.ToolRequest and dispatch.
+//  7. Record the completion, emit metrics, and return the response.
 func (h *toolHandler) invoke(w http.ResponseWriter, r *http.Request) {
 	kind := chi.URLParam(r, "kind")
 	if kind == "" {
@@ -87,7 +87,7 @@ func (h *toolHandler) invoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Backend record lookup, we need Kind, ToolKind, and the cost rate.
+	// The backend record carries Kind, ToolKind, and the cost rates.
 	bk, err := h.deps.Backends.Get(r.Context(), backendName)
 	if err != nil {
 		if errors.Is(err, backends.ErrNotFound) {
