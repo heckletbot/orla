@@ -220,7 +220,7 @@ func (s *Scheduler) Stats() []Stats {
 }
 
 // executor is the per-backend worker pool. The provider is kind-
-// agnostic; callers via AcquireLLM / AcquireTool downcast at the API
+// agnostic, callers via AcquireLLM / AcquireTool downcast at the API
 // boundary.
 type executor struct {
 	backend  *backends.Backend

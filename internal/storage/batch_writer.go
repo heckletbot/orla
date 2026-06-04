@@ -85,7 +85,7 @@ func NewBatchWriter[T any](cfg BatchWriterConfig[T]) *BatchWriter[T] {
 		cfg.Logger = slog.Default()
 	}
 
-	// cancel is stored on bw and called from Close; lifetime tracked by
+	// cancel is stored on bw and called from Close, lifetime tracked by
 	// the struct, not the caller.
 	runCtx, cancel := context.WithCancel(context.Background()) //nolint:gosec // see comment above
 
@@ -135,7 +135,7 @@ func (b *BatchWriter[T]) Failures() int64 { return b.failures.Load() }
 // Close stops accepting new Submit calls, drains the buffer, and waits
 // for the background flusher to finish. If ctx expires first, the
 // in-flight flush is canceled and ctx.Err() is returned. Safe to call
-// multiple times; subsequent calls return nil immediately.
+// multiple times, subsequent calls return nil immediately.
 func (b *BatchWriter[T]) Close(ctx context.Context) error {
 	var err error
 	b.closeOnce.Do(func() {

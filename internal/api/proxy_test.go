@@ -147,7 +147,7 @@ func TestProxy_StageInBodyMetadata(t *testing.T) {
 
 func TestProxy_AutoCreateStageOnFirstSighting(t *testing.T) {
 	env := newProxyEnv(t)
-	// "planning" has no backend; request body's model field is the fallback.
+	// "planning" has no backend, request body's model field is the fallback.
 	body, _ := json.Marshal(map[string]any{
 		"model":    "gpt4o", // <-- treated as backend name fallback
 		"messages": []map[string]string{{"role": "user", "content": "hi"}},
@@ -333,7 +333,7 @@ func TestProxy_StreamingClientDisconnect(t *testing.T) {
 
 	// The scheduler must release its slot. Capacity is 1, so the second
 	// dispatch can't proceed if the slot is still held. We don't make a
-	// real second request (it'd just hang); instead, verify Stats()
+	// real second request (it'd just hang), instead, verify Stats()
 	// drops to 0 in-flight after disconnect.
 	require.Eventually(t, func() bool {
 		stats := sched.Stats()

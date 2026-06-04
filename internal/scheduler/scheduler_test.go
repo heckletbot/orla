@@ -99,7 +99,7 @@ func TestScheduler_ConcurrencyCapEnforced(t *testing.T) {
 		})
 	}
 
-	// Give the scheduler a moment to stack requests; capacity=2 means
+	// Give the scheduler a moment to stack requests, capacity=2 means
 	// 3 should be queued.
 	require.Eventually(t, func() bool {
 		stats := s.Stats()
@@ -142,7 +142,7 @@ func TestScheduler_AcquireCancelInQueue(t *testing.T) {
 		return s.Stats()[0].InFlight == 1
 	}, time.Second, 5*time.Millisecond)
 
-	// Second request enters the queue; we cancel immediately.
+	// Second request enters the queue, we cancel immediately.
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	_, _, err := s.Acquire(ctx, "b")
@@ -268,9 +268,9 @@ func TestScheduler_RateLimitContextCancelInWait(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Second dispatch should wait ~1s; we cancel before that. The
+	// Second dispatch should wait ~1s, we cancel before that. The
 	// rate.Limiter.Wait error message contains "rate" or wraps a
-	// context error; we just verify the call returned promptly with
+	// context error, we just verify the call returned promptly with
 	// some error (cancellation worked).
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)

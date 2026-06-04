@@ -88,6 +88,6 @@ func TestStore_CloseIdempotency(t *testing.T) {
 	require.NoError(t, err)
 	store.Close()
 	// Second close should not panic. (database/sql.DB.Close returns nil
-	// after first close; pgxpool.Pool.Close is idempotent.)
+	// after first close, pgxpool.Pool.Close is idempotent.)
 	assert.NotPanics(t, store.Close)
 }

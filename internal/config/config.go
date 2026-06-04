@@ -2,7 +2,7 @@
 // variables (prefixed with ORLA_).
 //
 // Every option has a sensible default except DATABASE_URL, which is
-// required. There is no YAML config file in v1; env vars are the single
+// required. There is no YAML config file in v1, env vars are the single
 // source of truth so containerized deployments work without a sidecar
 // config file.
 package config
@@ -18,7 +18,7 @@ import (
 const EnvPrefix = "ORLA_"
 
 // Config is the full daemon configuration. Defaults live in the struct
-// tags; precedence is env var > default.
+// tags, precedence is env var > default.
 type Config struct {
 	// DatabaseURL is the Postgres connection URL. Required.
 	DatabaseURL string `env:"DATABASE_URL, required"`

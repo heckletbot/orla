@@ -17,7 +17,7 @@ import (
 var ErrNotFound = errors.New("stages: not found")
 
 // Registry is the interface the API handlers and proxy depend on. The
-// Postgres implementation is in this file; tests can use the in-memory
+// Postgres implementation is in this file, tests can use the in-memory
 // FakeRegistry in fake_registry.go.
 type Registry interface {
 	// GetOrCreate inserts a default (empty) row if one does not exist
@@ -32,7 +32,7 @@ type Registry interface {
 	List(ctx context.Context) ([]*Stage, error)
 
 	// Replace performs a full upsert. All scalar fields are replaced
-	// with the supplied values; Labels is fully overwritten (no merge).
+	// with the supplied values, Labels is fully overwritten (no merge).
 	Replace(ctx context.Context, s *Stage) (*Stage, error)
 
 	// Patch applies a partial update: nil pointers and nil maps in

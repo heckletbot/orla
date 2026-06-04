@@ -9,7 +9,7 @@ import (
 )
 
 // FakeRegistry is an in-memory Registry intended for tests. It is safe
-// for concurrent use; mutations take a write lock.
+// for concurrent use, mutations take a write lock.
 type FakeRegistry struct {
 	mu     sync.RWMutex
 	stages map[string]*Stage

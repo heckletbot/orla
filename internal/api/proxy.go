@@ -20,7 +20,7 @@ import (
 	"github.com/harvard-cns/orla/internal/telemetry"
 )
 
-// Header names. Lowercased on lookup; chi/net.http normalize incoming
+// Header names. Lowercased on lookup, chi/net.http normalize incoming
 // headers to canonical case so we can compare via Get().
 const (
 	HeaderStage       = "X-Orla-Stage"
@@ -68,7 +68,7 @@ type proxyHandler struct {
 
 // requestContext aggregates the identity metadata we extract from
 // headers + body fallbacks. Stages and tags are persisted later by the
-// completion-records writer; the proxy only consumes Stage and (in a
+// completion-records writer, the proxy only consumes Stage and (in a
 // future phase) ReasoningEffort.
 type requestContext struct {
 	Stage       string
@@ -84,7 +84,7 @@ func (h *proxyHandler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Peek for the stream flag, openai.ChatCompletionNewParams doesn't
-	// carry it; client-side it's controlled by which method (New vs
+	// carry it, client-side it's controlled by which method (New vs
 	// NewStreaming) is called.
 	var peek struct {
 		Stream bool `json:"stream"`

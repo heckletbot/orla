@@ -17,7 +17,7 @@ func registerHealthRoutes(r chi.Router, ready ReadyFunc) {
 }
 
 // healthzHandler reports process liveness. It always returns 200 as
-// long as the process is running; load balancers use this to decide
+// long as the process is running, load balancers use this to decide
 // whether to keep the pod in service.
 func healthzHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
@@ -26,7 +26,7 @@ func healthzHandler() http.HandlerFunc {
 }
 
 // readyzHandler reports readiness to serve real traffic. It runs the
-// supplied ReadyFunc with a short timeout; failures render a 503.
+// supplied ReadyFunc with a short timeout, failures render a 503.
 func readyzHandler(ready ReadyFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if ready == nil {

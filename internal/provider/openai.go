@@ -52,7 +52,7 @@ func WithRetry(attempts uint64, initial, max time.Duration) Option {
 }
 
 // NewOpenAI constructs a Provider for the given backend. The API key
-// is resolved via os.Getenv(backend.APIKeyEnvVar); an unset value is
+// is resolved via os.Getenv(backend.APIKeyEnvVar), an unset value is
 // permitted (some local backends like Ollama don't require auth).
 func NewOpenAI(b *backends.Backend, opts ...Option) LLMProvider {
 	// LLM backends always have a model_id (enforced at registration).
@@ -117,7 +117,7 @@ func (p *openAIProvider) ChatStream(ctx context.Context, params openai.ChatCompl
 }
 
 // retry runs fn with exponential backoff. Retries only fire on errors
-// classified as transient (see isTransient); other errors fail fast.
+// classified as transient (see isTransient), other errors fail fast.
 func (p *openAIProvider) retry(ctx context.Context, fn func() error) error {
 	policy := backoff.NewExponentialBackOff()
 	policy.InitialInterval = p.retryInitial
@@ -140,7 +140,7 @@ func (p *openAIProvider) retry(ctx context.Context, fn func() error) error {
 }
 
 // isTransient reports whether err is retriable. Network errors and
-// 5xx / 429 responses are; everything else is permanent.
+// 5xx / 429 responses are, everything else is permanent.
 func isTransient(err error) bool {
 	if err == nil {
 		return false

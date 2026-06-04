@@ -19,12 +19,12 @@ import (
 )
 
 // ReadyFunc reports whether the daemon is fully ready to serve traffic.
-// /readyz invokes it with a short timeout; returning a non-nil error
+// /readyz invokes it with a short timeout, returning a non-nil error
 // renders a 503. ReadyFunc may be nil (then /readyz always reports OK).
 type ReadyFunc func(ctx context.Context) error
 
 // ServerConfig is the input to NewServer. All durations have sensible
-// defaults; the only required field is ListenAddress.
+// defaults, the only required field is ListenAddress.
 type ServerConfig struct {
 	ListenAddress     string
 	ReadTimeout       time.Duration

@@ -33,7 +33,7 @@ const ToolKind = "structure-prediction"
 // Request is the wire shape POSTed to a structure-prediction wrapper.
 type Request struct {
 	// Sequences is the list of protein FASTA sequences. For a monomer
-	// prediction supply one entry; for a complex supply multiple.
+	// prediction supply one entry, for a complex supply multiple.
 	Sequences []string `json:"sequences"`
 
 	// LigandSMILES is the optional ligand SMILES, supply one entry
@@ -42,7 +42,7 @@ type Request struct {
 
 	// Options is a kind-of-tool-specific opaque map (e.g.,
 	// {"num_recycles": 3, "seed": 42}). The wrapper service interprets
-	// it per backend; orla passes it through verbatim.
+	// it per backend, orla passes it through verbatim.
 	Options map[string]any `json:"options,omitempty"`
 }
 
@@ -78,9 +78,9 @@ type Client struct {
 var _ provider.ToolProvider = (*Client)(nil)
 
 // New builds a Client from a backend record. The API key (if any) is
-// resolved via os.Getenv(b.APIKeyEnvVar); an unset value yields an
+// resolved via os.Getenv(b.APIKeyEnvVar), an unset value yields an
 // anonymous client. Endpoint must already include the scheme (http://
-// or https://); it is treated as a base URL.
+// or https://), it is treated as a base URL.
 func New(b *backends.Backend) *Client {
 	c := &Client{
 		name:     b.Name,

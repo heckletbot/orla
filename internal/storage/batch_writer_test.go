@@ -141,7 +141,7 @@ func TestBatchWriter_DropsWhenBufferFull(t *testing.T) {
 		_ = bw.Close(context.Background())
 	})
 
-	// First Submit kicks the flusher (which blocks on gate); subsequent
+	// First Submit kicks the flusher (which blocks on gate), subsequent
 	// submits fill the BufferSize=2 channel and then overflow.
 	require.True(t, bw.Submit(1))
 

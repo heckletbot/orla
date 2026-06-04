@@ -40,7 +40,7 @@ func errorType(status int) string {
 }
 
 // writeError renders an error envelope. The message is the unwrapped err
-// string; the status drives the type field.
+// string, the status drives the type field.
 func writeError(w http.ResponseWriter, status int, err error) {
 	msg := http.StatusText(status)
 	if err != nil {
@@ -61,7 +61,7 @@ func writeErrorMsg(w http.ResponseWriter, status int, msg string) {
 }
 
 // decodeJSON parses the request body into v. The body is left limited
-// by the bodyLimit middleware upstream; we just translate decode errors
+// by the bodyLimit middleware upstream, we just translate decode errors
 // into a 400.
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	dec := json.NewDecoder(r.Body)

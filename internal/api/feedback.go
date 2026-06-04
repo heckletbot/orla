@@ -38,7 +38,7 @@ type feedbackHandler struct {
 }
 
 // feedbackRequest is the wire shape. completion_id and stage_id are
-// required; the developer's SDK can pull stage_id from the original
+// required, the developer's SDK can pull stage_id from the original
 // chat completion call. Doing it on the developer side avoids a sync
 // DB lookup against an async-batched table.
 type feedbackRequest struct {

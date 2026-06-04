@@ -23,7 +23,7 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// OpenConfig is the input to Open. DatabaseURL is required; everything
+// OpenConfig is the input to Open. DatabaseURL is required, everything
 // else has reasonable defaults.
 type OpenConfig struct {
 	DatabaseURL     string
@@ -33,7 +33,7 @@ type OpenConfig struct {
 }
 
 // Store owns the Postgres connection pool. It also keeps a *sql.DB
-// adapter alive for use by goose and any database/sql-based code; the
+// adapter alive for use by goose and any database/sql-based code, the
 // underlying connections come from the same pgxpool so there is no
 // double-pool overhead.
 type Store struct {
@@ -58,7 +58,7 @@ func Open(ctx context.Context, cfg OpenConfig) (*Store, error) {
 		return nil, fmt.Errorf("storage: parse database url: %w", err)
 	}
 	if cfg.MaxOpenConns > 0 {
-		// pgxpool wants int32; clamp at the boundary so callers can
+		// pgxpool wants int32, clamp at the boundary so callers can
 		// keep an idiomatic int in their config struct.
 		poolCfg.MaxConns = int32(min(cfg.MaxOpenConns, math.MaxInt32)) //nolint:gosec // clamped above
 	}

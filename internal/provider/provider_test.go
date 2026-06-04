@@ -178,7 +178,7 @@ func TestOpenAIProvider_Chat_RetriesOn429(t *testing.T) {
 
 func TestOpenAIProvider_Chat_RespectsContext(t *testing.T) {
 	url, _ := openaiTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		// Slow handler; should be canceled by the client ctx.
+		// Slow handler, should be canceled by the client ctx.
 		select {
 		case <-r.Context().Done():
 		case <-time.After(2 * time.Second):

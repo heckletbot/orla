@@ -106,7 +106,7 @@ func (m *MockProvider) Chat(ctx context.Context, params openai.ChatCompletionNew
 // ChatStream is intentionally unimplemented for v1. Streaming tests
 // use a real httptest server.
 func (m *MockProvider) ChatStream(_ context.Context, _ openai.ChatCompletionNewParams) *ssestream.Stream[openai.ChatCompletionChunk] {
-	// ssestream.Stream has unexported fields; we can't construct an
+	// ssestream.Stream has unexported fields, we can't construct an
 	// erroring stream from outside the package. Tests needing streams
 	// should use httptest + the real OpenAI provider.
 	panic("MockProvider.ChatStream: not implemented; use the real provider against an httptest server")

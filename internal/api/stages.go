@@ -17,7 +17,7 @@ import (
 //	PATCH  /api/v1/stages/{id}   (partial update)
 //	DELETE /api/v1/stages/{id}
 //
-// Auto-create on first sighting is *not* exposed via REST; it happens
+// Auto-create on first sighting is *not* exposed via REST, it happens
 // implicitly inside the proxy when a request arrives for an unknown
 // stage. The mapper is expected to use PUT/PATCH for explicit
 // configuration.

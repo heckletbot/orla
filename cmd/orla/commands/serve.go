@@ -194,7 +194,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 }
 
 // newLogger constructs a slog.Logger writing to stderr. format is "text"
-// or "json"; level is "debug" | "info" | "warn" | "error" (case
+// or "json", level is "debug" | "info" | "warn" | "error" (case
 // insensitive). Unknown values fall back to text + info.
 func newLogger(format, level string) *slog.Logger {
 	var lvl slog.Level

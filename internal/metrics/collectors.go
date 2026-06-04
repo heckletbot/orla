@@ -68,7 +68,7 @@ func (c *SchedulerCollector) Collect(ch chan<- prometheus.Metric) {
 }
 
 // BatchWriterStats is the subset of stats every BatchWriter exposes.
-// CompletionWriter and FeedbackWriter both satisfy this; the collector
+// CompletionWriter and FeedbackWriter both satisfy this, the collector
 // uses it to emit drops/flushes/failures per writer kind.
 type BatchWriterStats interface {
 	Drops() int64

@@ -23,7 +23,7 @@ type Stage struct {
 
 // PatchRequest describes a partial update to a Stage. Nil pointers and
 // nil maps mean "leave this field untouched." Non-nil maps replace the
-// stored labels entirely; merge-style updates are intentionally not
+// stored labels entirely, merge-style updates are intentionally not
 // supported in v1 to keep the wire contract simple.
 type PatchRequest struct {
 	Backend         *string        `json:"backend,omitempty"`
