@@ -23,24 +23,22 @@ We take security vulnerabilities seriously. If you discover a security vulnerabi
 - Once the vulnerability is fixed, we will:
   - Credit you (if desired) in the security advisory
   - Publish a security advisory with details
-  - Update the changelog
 
 ## security best practices
 
-When using orla:
+When deploying orla:
 
 - Keep orla updated to the latest version
-- Review and validate tools in your `tools/` directory
-- Use appropriate file permissions for tool executables
-- Be cautious when executing tools from untrusted sources
-- Use configuration files with appropriate access controls
-- Monitor logs for suspicious activity
+- Run orla behind an authenticating reverse proxy (nginx, Cloudflare, an auth gateway) — orla itself does not enforce authentication on its API
+- Use Postgres credentials with the minimum privileges orla requires (read/write on its own database; no superuser)
+- Protect the upstream LLM/tool API keys orla holds in environment variables — restrict who can read the process environment and avoid committing `.env` files
+- Monitor `/metrics` and structured logs for anomalous request patterns
 
 ## known security considerations
 
-1. orla executes tools from the filesystem. Ensure tools are from trusted sources
-2. tools should have appropriate permissions (executable but not world-writable)
-3. when running in HTTP mode, consider firewall rules and authentication
-4. ensure timeouts are set appropriately to prevent resource exhaustion
+1. **No built-in auth.** The HTTP API trusts every caller. A reverse proxy or service mesh must enforce identity.
+2. **API key fan-out.** orla holds outbound credentials for every backend; compromise of the orla process exposes all of them.
+3. **Rate limiting is per-instance.** `rate_per_second` is enforced per orla process — multiple replicas multiply the effective cap.
+4. **Tenant isolation is advisory.** Tenancy is carried by request headers (`X-Orla-Tag-Tenant`) and used for fair-share scheduling; it is not a security boundary on its own.
 
 Thank you for helping keep orla secure!
