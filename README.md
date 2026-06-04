@@ -5,13 +5,11 @@
 <p align="center">
   <a href="https://goreportcard.com/report/github.com/harvard-cns/orla"><img src="https://img.shields.io/badge/go%20report-A+-brightgreen.svg?style=flat" alt="Go Report Card"></a>
   <a href="https://www.bestpractices.dev/projects/6573"><img src="https://www.bestpractices.dev/projects/6573/badge" alt="OpenSSF Best Practices"></a>
-  <a href="https://github.com/harvard-cns/orla/actions/workflows/build.yml"><img src="https://github.com/harvard-cns/orla/actions/workflows/build.yml/badge.svg" alt="Build"></a>
+  <a href="https://github.com/harvard-cns/orla/actions/workflows/ci.yml"><img src="https://github.com/harvard-cns/orla/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://codecov.io/gh/harvard-cns/orla"><img src="https://codecov.io/gh/harvard-cns/orla/branch/main/graph/badge.svg" alt="Codecov"></a>
 </p>
 
-Please see our website for the most up to date information.
-
-[The Orla Project Website](https://orlaserver.github.io/)
+> **Migration note.** The [Orla project website](https://orlaserver.github.io/) currently documents Orla v1. We are updating it incrementally for v2. Until that work lands, the `docs/` directory in this repository is the source of truth for v2.
 
 Orla is a library for building and running LLM-based agentic systems. Modern agentic applications are workflows that combine multiple LLM calls, tool invocations, and heterogeneous infrastructure. Today, developers often stitch these pieces together manually using orchestration code, LLM serving engines, and tool execution logic.
 
@@ -48,7 +46,7 @@ cd orla
 go build -o bin/orla ./cmd/orla
 ```
 
-Visit our [website](https://orlaserver.github.io) to learn more.
+For your first stage and a tour of the runtime adaptation loop, see [`docs/quickstart.md`](docs/quickstart.md).
 
 ## Citation
 
