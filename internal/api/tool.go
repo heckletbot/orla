@@ -4,7 +4,7 @@
 // "developer hands orla a request, orla routes by stage, records
 // completion + cost, returns the response". For tool dispatches the
 // request and response are kind-specific JSON payloads; orla is
-// agnostic to their shapes — it just routes, accounts, and feeds
+// agnostic to their shapes, it just routes, accounts, and feeds
 // the mapper.
 
 package api
@@ -87,7 +87,7 @@ func (h *toolHandler) invoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Backend record lookup — we need Kind, ToolKind, and the cost rate.
+	// Backend record lookup, we need Kind, ToolKind, and the cost rate.
 	bk, err := h.deps.Backends.Get(r.Context(), backendName)
 	if err != nil {
 		if errors.Is(err, backends.ErrNotFound) {

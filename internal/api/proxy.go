@@ -83,7 +83,7 @@ func (h *proxyHandler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Peek for the stream flag — openai.ChatCompletionNewParams doesn't
+	// Peek for the stream flag, openai.ChatCompletionNewParams doesn't
 	// carry it; client-side it's controlled by which method (New vs
 	// NewStreaming) is called.
 	var peek struct {

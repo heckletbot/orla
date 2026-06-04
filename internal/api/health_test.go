@@ -26,7 +26,7 @@ func newTestServer(t *testing.T, ready ReadyFunc) *Server {
 
 func TestHealthz_AlwaysOK(t *testing.T) {
 	srv := newTestServer(t, func(ctx context.Context) error {
-		return errors.New("db down — should be irrelevant for healthz")
+		return errors.New("db down, should be irrelevant for healthz")
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)

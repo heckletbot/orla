@@ -8,7 +8,7 @@
 //
 // Streaming and non-streaming requests both consume one slot. The
 // caller holds the slot until the response (or stream) is fully
-// delivered — see Acquire.
+// delivered, see Acquire.
 package scheduler
 
 import (
@@ -52,7 +52,7 @@ type Scheduler struct {
 }
 
 // New returns a Scheduler with no backends registered. factory may be
-// nil — provider.NewOpenAI is used by default (treating every backend
+// nil, provider.NewOpenAI is used by default (treating every backend
 // as KindLLM). serve.go installs a factory that branches by Kind.
 func New(factory ProviderFactory, logger *slog.Logger) *Scheduler {
 	if factory == nil {
@@ -292,7 +292,7 @@ func (e *executor) acquire(ctx context.Context) (provider.Backend, ReleaseFunc, 
 	}
 }
 
-// makeRelease returns a ReleaseFunc that's idempotent — calling twice
+// makeRelease returns a ReleaseFunc that's idempotent, calling twice
 // is harmless. This matters because some streaming code paths defer
 // release and then explicitly release on a happy-path branch.
 func makeRelease(e *executor) ReleaseFunc {

@@ -11,7 +11,7 @@ import (
 
 // BackendLifecycle is the subset of scheduler.Scheduler the backend
 // handlers call to keep the runtime in sync with the registry.
-// Optional — pass nil in tests that don't exercise dispatch.
+// Optional, pass nil in tests that don't exercise dispatch.
 type BackendLifecycle interface {
 	Register(b *backends.Backend)
 	Deregister(name string)

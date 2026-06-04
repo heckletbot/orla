@@ -61,7 +61,7 @@ func NewPostgresRegistry(pool *pgxpool.Pool) *PostgresRegistry {
 var _ Registry = (*PostgresRegistry)(nil)
 
 func (r *PostgresRegistry) Insert(ctx context.Context, b *Backend) (*Backend, error) {
-	// Default Kind to LLM for backwards compatibility — older callers
+	// Default Kind to LLM for backwards compatibility, older callers
 	// (and the existing finance/bio demos) leave it unset.
 	kind := b.Kind
 	if kind == "" {

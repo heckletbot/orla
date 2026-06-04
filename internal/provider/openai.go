@@ -18,7 +18,7 @@ import (
 
 // openAIProvider implements Provider against an OpenAI-compatible
 // HTTP endpoint. Used for both literal OpenAI (provider="openai") and
-// SGLang/vLLM/Ollama (other prefixes) — they all share the wire format.
+// SGLang/vLLM/Ollama (other prefixes), they all share the wire format.
 type openAIProvider struct {
 	name    string
 	modelID string

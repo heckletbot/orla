@@ -359,7 +359,7 @@ func fakeStructurePredUpstream(t *testing.T) *httptest.Server {
 			http.Error(w, "wrong path", http.StatusNotFound)
 			return
 		}
-		// Decode the envelope. We don't validate the inner payload here —
+		// Decode the envelope. We don't validate the inner payload here,
 		// the wrapper would.
 		var env provider.ToolRequest
 		_ = json.NewDecoder(r.Body).Decode(&env)
@@ -465,7 +465,7 @@ func TestIntegration_ToolDispatch_StructurePrediction(t *testing.T) {
 // TestIntegration_ChatAndToolCoexist verifies that a single orla
 // instance simultaneously hosts an LLM backend at /v1/chat/completions
 // and a tool backend at /v1/tools/structure-prediction. Same stage
-// registry, same scheduler — different routes per backend kind.
+// registry, same scheduler, different routes per backend kind.
 func TestIntegration_ChatAndToolCoexist(t *testing.T) {
 	llmUpstream := fakeOpenAIUpstream(t)
 	t.Cleanup(llmUpstream.Close)

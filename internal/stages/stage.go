@@ -11,7 +11,7 @@ import "time"
 
 // Stage is the persistent record for a single stage id. The zero
 // values for Backend, ReasoningEffort, and Labels are the "not yet
-// configured" state — auto-created on first sighting by the proxy.
+// configured" state, auto-created on first sighting by the proxy.
 type Stage struct {
 	ID              string         `json:"id"`
 	Backend         string         `json:"backend"`

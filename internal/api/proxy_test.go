@@ -25,7 +25,7 @@ import (
 )
 
 // proxyEnv wires up a fake stage registry and a real scheduler with a
-// mock provider — exactly the dependencies the handler needs.
+// mock provider, exactly the dependencies the handler needs.
 type proxyEnv struct {
 	srv    *Server
 	stages *stages.FakeRegistry

@@ -36,7 +36,7 @@ type Request struct {
 	// prediction supply one entry; for a complex supply multiple.
 	Sequences []string `json:"sequences"`
 
-	// LigandSMILES is the optional ligand SMILES — supply one entry
+	// LigandSMILES is the optional ligand SMILES, supply one entry
 	// per ligand to co-fold. Empty list means protein-only prediction.
 	LigandSMILES []string `json:"ligand_smiles,omitempty"`
 
@@ -85,7 +85,7 @@ func New(b *backends.Backend) *Client {
 	c := &Client{
 		name:     b.Name,
 		endpoint: b.Endpoint,
-		// Structure-prediction calls can take minutes — generous timeout.
+		// Structure-prediction calls can take minutes, generous timeout.
 		// The orla-side context still bounds the call separately.
 		httpc: &http.Client{Timeout: 10 * time.Minute},
 	}

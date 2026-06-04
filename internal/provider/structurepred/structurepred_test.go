@@ -148,7 +148,7 @@ func TestClient_Invoke_RejectsWrongKindInEnvelope(t *testing.T) {
 
 func TestClient_Invoke_RespectsContext(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Block until the request is cancelled — used to verify the ctx
+		// Block until the request is cancelled, used to verify the ctx
 		// propagates through the http client.
 		<-r.Context().Done()
 		w.WriteHeader(http.StatusInternalServerError)

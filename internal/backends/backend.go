@@ -65,7 +65,7 @@ type Backend struct {
 
 // PatchRequest describes a partial update. nil pointers leave the
 // corresponding field unchanged. Name, Kind, ModelID, and ToolKind
-// cannot be patched — to change them, delete and re-create the
+// cannot be patched, to change them, delete and re-create the
 // backend.
 type PatchRequest struct {
 	Endpoint            *string  `json:"endpoint,omitempty"`

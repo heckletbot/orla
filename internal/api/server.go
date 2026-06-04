@@ -94,7 +94,7 @@ func NewServer(cfg ServerConfig) *Server {
 func (s *Server) Router() chi.Router { return s.router }
 
 // Addr returns the resolved listen address (useful in tests that use
-// :0 to pick an ephemeral port — only valid after Start).
+// :0 to pick an ephemeral port, only valid after Start).
 func (s *Server) Addr() string { return s.httpServer.Addr }
 
 // Start blocks until the HTTP server stops. Returns nil when stopped
