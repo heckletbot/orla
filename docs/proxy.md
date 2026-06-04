@@ -4,13 +4,13 @@ The OpenAI-compatible inference entry point. The developer's entire hot path.
 
 ## Wire shape
 
-Request: standard OpenAI chat completion. Plus identity metadata (see
-`personas.md` for the full table).
+Request: standard OpenAI chat completion plus identity metadata. See
+[`concepts.md`](concepts.md#identity-tags) for the full tag list.
 
 Response: standard OpenAI chat completion. The response's `model` field
 reports the **resolved backend name**, not necessarily what the client
-sent in its `model` field. Divergence is by design under the two-persona
-contract.
+sent in its `model` field. Divergence is by design under the developer
+and platform engineer split documented in [`concepts.md`](concepts.md).
 
 Streaming follows OpenAI's data-only SSE format, terminated by
 `data: [DONE]`.
