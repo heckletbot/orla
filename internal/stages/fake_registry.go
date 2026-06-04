@@ -3,7 +3,7 @@ package stages
 import (
 	"context"
 	"maps"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 )
@@ -64,11 +64,7 @@ func (r *FakeRegistry) Get(_ context.Context, id string) (*Stage, error) {
 func (r *FakeRegistry) List(_ context.Context) ([]*Stage, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	ids := make([]string, 0, len(r.stages))
-	for id := range r.stages {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
+	ids := slices.Sorted(maps.Keys(r.stages))
 	out := make([]*Stage, 0, len(ids))
 	for _, id := range ids {
 		out = append(out, cloneStage(r.stages[id]))

@@ -15,8 +15,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
+	"maps"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -167,7 +168,7 @@ func (h *toolHandler) invoke(w http.ResponseWriter, r *http.Request) {
 		status:       "success",
 		latencyMs:    &latencyMs,
 		costUSD:      costUSD,
-		usage:        copyUsage(resp.Usage),
+		usage:        maps.Clone(resp.Usage),
 	})
 	h.emitMetrics(rc.Stage, backendName, "success", latencyMs)
 
@@ -244,7 +245,7 @@ func computeToolCost(
 	}
 	if resp.CostUSD != nil {
 		c := *resp.CostUSD
-		if !isFiniteNonNegativeCost(c) {
+		if !isFiniteNonNegative(c) {
 			slog.Default().Warn("tool: dropping non-finite or negative reported cost",
 				"backend", backendName,
 				"completion_id", completionID,
@@ -269,12 +270,12 @@ func computeToolCost(
 		slog.Default().Warn("tool: usage keys do not overlap backend rates",
 			"backend", backendName,
 			"completion_id", completionID,
-			"usage_keys", mapKeys(resp.Usage),
-			"rate_keys", mapKeys(rates),
+			"usage_keys", slices.Sorted(maps.Keys(resp.Usage)),
+			"rate_keys", slices.Sorted(maps.Keys(rates)),
 		)
 		return nil
 	}
-	if !isFiniteNonNegativeCost(total) {
+	if !isFiniteNonNegative(total) {
 		slog.Default().Warn("tool: dot-product cost is non-finite or negative",
 			"backend", backendName,
 			"completion_id", completionID,
@@ -283,39 +284,6 @@ func computeToolCost(
 		return nil
 	}
 	return &total
-}
-
-// isFiniteNonNegativeCost reports whether v is a value safe to record
-// as a USD cost. Negative, NaN, and Inf are rejected.
-func isFiniteNonNegativeCost(v float64) bool {
-	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0
-}
-
-// copyUsage returns a shallow copy of the usage map so the async
-// telemetry writer cannot race with provider-side mutation of the
-// original. Nil in, nil out.
-func copyUsage(u map[string]float64) map[string]float64 {
-	if u == nil {
-		return nil
-	}
-	out := make(map[string]float64, len(u))
-	for k, v := range u {
-		out[k] = v
-	}
-	return out
-}
-
-// mapKeys returns the keys of m as a slice, useful for logging when
-// the values are irrelevant. Order is not stable.
-func mapKeys(m map[string]float64) []string {
-	if len(m) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }
 
 func (h *toolHandler) emitMetrics(stage, backend, status string, latencyMs int) {

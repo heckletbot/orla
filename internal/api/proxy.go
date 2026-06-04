@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -369,15 +370,8 @@ func (h *proxyHandler) recordCompletion(in *completionInputs) {
 func extractRequestContext(r *http.Request, metadata shared.Metadata) *requestContext {
 	rc := &requestContext{Tags: make(map[string]string)}
 
-	rc.Stage = r.Header.Get(HeaderStage)
-	if rc.Stage == "" {
-		rc.Stage = metadata[metaStage]
-	}
-
-	rc.WorkflowRun = r.Header.Get(HeaderWorkflowRun)
-	if rc.WorkflowRun == "" {
-		rc.WorkflowRun = metadata[metaWorkflowRun]
-	}
+	rc.Stage = cmp.Or(r.Header.Get(HeaderStage), metadata[metaStage])
+	rc.WorkflowRun = cmp.Or(r.Header.Get(HeaderWorkflowRun), metadata[metaWorkflowRun])
 
 	for name, values := range r.Header {
 		if !strings.HasPrefix(name, HeaderTagPrefix) {

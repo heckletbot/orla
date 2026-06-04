@@ -113,8 +113,8 @@ func flushCompletions(pool *pgxpool.Pool, logger *slog.Logger) storage.FlushFunc
 
 		rows := make([][]any, 0, len(items))
 		for _, rec := range items {
-			tagsBytes := encodeJSONBObject(rec.Tags, logger, "tags", rec.CompletionID)
-			usageBytes := encodeJSONBObject(rec.Usage, logger, "usage", rec.CompletionID)
+			tagsBytes := encodeJSONBObject(rec.Tags, len(rec.Tags) == 0, logger, "tags", rec.CompletionID)
+			usageBytes := encodeJSONBObject(rec.Usage, len(rec.Usage) == 0, logger, "usage", rec.CompletionID)
 			rows = append(rows, []any{
 				rec.CompletionID,
 				rec.StageID,
@@ -149,13 +149,13 @@ func flushCompletions(pool *pgxpool.Pool, logger *slog.Logger) storage.FlushFunc
 // or fails to marshal.
 var jsonbEmptyObject = []byte("{}")
 
-// encodeJSONBObject marshals a map[string]V into JSONB bytes safe for
-// a NOT NULL DEFAULT '{}'::jsonb column. nil or empty maps return the
-// shared "{}" sentinel. Marshal failures (NaN, +Inf, unsupported
-// values) fall back to "{}" and are logged with the column name and
-// completion id so the loss is observable.
-func encodeJSONBObject(v any, logger *slog.Logger, column, completionID string) []byte {
-	if isEmptyMap(v) {
+// encodeJSONBObject marshals a value into JSONB bytes safe for a
+// NOT NULL DEFAULT '{}'::jsonb column. Callers pass isEmpty
+// pre-computed from the concrete map type so we avoid a reflective
+// type switch. Marshal failures fall back to "{}" and log the
+// column name and completion id so the loss is observable.
+func encodeJSONBObject(v any, isEmpty bool, logger *slog.Logger, column, completionID string) []byte {
+	if isEmpty {
 		return jsonbEmptyObject
 	}
 	b, err := json.Marshal(v)
@@ -170,24 +170,6 @@ func encodeJSONBObject(v any, logger *slog.Logger, column, completionID string) 
 		return jsonbEmptyObject
 	}
 	return b
-}
-
-// isEmptyMap is true for nil maps and for non-nil maps of length 0.
-// Without this guard, json.Marshal of a nil map[string]string returns
-// the literal []byte("null"), which is valid JSONB but the wrong
-// shape for a column declared as "JSONB NOT NULL DEFAULT '{}'".
-func isEmptyMap(v any) bool {
-	switch m := v.(type) {
-	case nil:
-		return true
-	case map[string]string:
-		return len(m) == 0
-	case map[string]float64:
-		return len(m) == 0
-	case map[string]any:
-		return len(m) == 0
-	}
-	return false
 }
 
 func nullableString(s string) any {
