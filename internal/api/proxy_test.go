@@ -88,6 +88,59 @@ func bodyForChat(messages ...string) []byte {
 	return b
 }
 
+func TestProxy_ComputesLLMCostUSD(t *testing.T) {
+	mock := provider.NewMockProvider().WithName("gpt4o").
+		WithResponse(&openai.ChatCompletion{
+			ID:    "chatcmpl-cost",
+			Model: "openai:gpt-4o",
+			Choices: []openai.ChatCompletionChoice{{
+				Message: openai.ChatCompletionMessage{Role: "assistant", Content: "hi"},
+			}},
+			Usage: openai.CompletionUsage{PromptTokens: 2_000_000, CompletionTokens: 1_000_000},
+		})
+
+	sched := scheduler.New(
+		func(b *backends.Backend) provider.Backend { return mock },
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	t.Cleanup(func() { _ = sched.Shutdown(context.Background()) })
+	in, out := 0.5, 1.5
+	sched.Register(&backends.Backend{
+		Name: "gpt4o", Endpoint: "x", ModelID: new("openai:gpt-4o"),
+		MaxConcurrency:      2,
+		InputCostPerMtoken:  &in,
+		OutputCostPerMtoken: &out,
+	})
+
+	stageReg := stages.NewFakeRegistry()
+	_, err := stageReg.Replace(context.Background(), &stages.Stage{
+		ID: "planning", Backend: "gpt4o",
+	})
+	require.NoError(t, err)
+
+	sink := &recordingSink{}
+	srv := NewServer(ServerConfig{
+		ListenAddress: "127.0.0.1:0",
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	RegisterProxyRoutes(srv.Router(), ProxyDeps{
+		Stages: stageReg, Scheduler: sched, CompletionSink: sink,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		bytes.NewReader(bodyForChat("hi")))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(HeaderStage, "planning")
+	rr := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	require.Len(t, sink.got, 1)
+	require.NotNil(t, sink.got[0].CostUSD)
+	// 2M prompt × $0.50/Mt + 1M completion × $1.50/Mt = 1.0 + 1.5 = $2.50.
+	assert.InDelta(t, 2.5, *sink.got[0].CostUSD, 1e-9)
+}
+
 func TestProxy_RequiresStageHeader(t *testing.T) {
 	env := newProxyEnv(t)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",

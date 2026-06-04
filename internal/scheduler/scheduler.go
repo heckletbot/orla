@@ -202,6 +202,20 @@ type Stats struct {
 	Dispatched int64
 }
 
+// BackendOf returns the backend record the scheduler was registered
+// with for name, or (nil, false) if no executor exists. The returned
+// pointer is shared with the executor and must not be mutated. It is
+// stable until the next Register or Deregister call for this name.
+func (s *Scheduler) BackendOf(name string) (*backends.Backend, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	exec, ok := s.executors[name]
+	if !ok {
+		return nil, false
+	}
+	return exec.backend, true
+}
+
 // Stats returns a snapshot for every registered backend.
 func (s *Scheduler) Stats() []Stats {
 	s.mu.RLock()

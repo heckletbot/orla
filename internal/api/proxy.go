@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -176,6 +178,7 @@ func (h *proxyHandler) serveNonStreaming(w http.ResponseWriter, r *http.Request,
 	}
 	prompt := int(resp.Usage.PromptTokens)
 	completion := int(resp.Usage.CompletionTokens)
+	costUSD := h.computeLLMCost(backendName, prompt, completion, completionID)
 	h.recordCompletion(&completionInputs{
 		completionID:     completionID,
 		rc:               rc,
@@ -184,6 +187,7 @@ func (h *proxyHandler) serveNonStreaming(w http.ResponseWriter, r *http.Request,
 		promptTokens:     &prompt,
 		completionTokens: &completion,
 		latencyMs:        &latencyMs,
+		costUSD:          costUSD,
 	})
 	h.emitMetrics(rc.Stage, backendName, "success", latencyMs)
 
@@ -275,6 +279,7 @@ func (h *proxyHandler) serveStreaming(w http.ResponseWriter, r *http.Request, rc
 	if completionTokens == 0 {
 		ct = nil
 	}
+	costUSD := h.computeLLMCost(backendName, promptTokens, completionTokens, completionID)
 	h.recordCompletion(&completionInputs{
 		completionID:     completionID,
 		rc:               rc,
@@ -283,8 +288,40 @@ func (h *proxyHandler) serveStreaming(w http.ResponseWriter, r *http.Request, rc
 		promptTokens:     pt,
 		completionTokens: ct,
 		latencyMs:        &latencyMs,
+		costUSD:          costUSD,
 	})
 	h.emitMetrics(rc.Stage, backendName, "success", latencyMs)
+}
+
+// computeLLMCost rolls token counts and the backend's per-million-
+// token rates into a dollar amount. Returns nil if the backend has no
+// configured rates or the scheduler does not know about this backend
+// name. A non-finite result is dropped with a log line so a
+// configuration error cannot poison cost aggregates.
+func (h *proxyHandler) computeLLMCost(backendName string, promptTokens, completionTokens int, completionID string) *float64 {
+	b, ok := h.deps.Scheduler.BackendOf(backendName)
+	if !ok {
+		return nil
+	}
+	if b.InputCostPerMtoken == nil && b.OutputCostPerMtoken == nil {
+		return nil
+	}
+	var cost float64
+	if b.InputCostPerMtoken != nil {
+		cost += float64(promptTokens) * (*b.InputCostPerMtoken) / 1_000_000.0
+	}
+	if b.OutputCostPerMtoken != nil {
+		cost += float64(completionTokens) * (*b.OutputCostPerMtoken) / 1_000_000.0
+	}
+	if math.IsNaN(cost) || math.IsInf(cost, 0) || cost < 0 {
+		slog.Default().Warn("proxy: LLM cost computation produced non-finite or negative value",
+			"backend", backendName,
+			"completion_id", completionID,
+			"cost_usd", cost,
+		)
+		return nil
+	}
+	return &cost
 }
 
 type completionInputs struct {
