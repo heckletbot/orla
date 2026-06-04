@@ -367,8 +367,8 @@ func fakeStructurePredUpstream(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		// Inner Response = {"structure_cif": "data_test\n#"}
 		_ = json.NewEncoder(w).Encode(provider.ToolResponse{
-			Payload:    []byte(`{"structure_cif":"data_test\n#"}`),
-			GPUSeconds: 5.0,
+			Payload: []byte(`{"structure_cif":"data_test\n#"}`),
+			Usage:   map[string]float64{"gpu_seconds": 5.0},
 		})
 	}))
 }
@@ -386,12 +386,12 @@ func TestIntegration_ToolDispatch_StructurePrediction(t *testing.T) {
 
 	// 1. Register a tool backend pointing at the fake upstream.
 	createBackend := mustMarshal(t, map[string]any{
-		"name":                "fake-boltz",
-		"kind":                "tool",
-		"tool_kind":           "structure-prediction",
-		"endpoint":            upstream.URL,
-		"max_concurrency":     1,
-		"cost_per_gpu_second": 0.001, // $/s
+		"name":            "fake-boltz",
+		"kind":            "tool",
+		"tool_kind":       "structure-prediction",
+		"endpoint":        upstream.URL,
+		"max_concurrency": 1,
+		"rates":           map[string]float64{"gpu_seconds": 0.001}, // $/s
 	})
 	resp := postJSON(t, base+"/api/v1/backends", createBackend)
 	require.Equal(t, http.StatusCreated, resp.StatusCode, readBody(t, resp))
@@ -425,7 +425,7 @@ func TestIntegration_ToolDispatch_StructurePrediction(t *testing.T) {
 	var toolResp provider.ToolResponse
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&toolResp))
 	_ = resp.Body.Close()
-	assert.InDelta(t, 5.0, toolResp.GPUSeconds, 1e-9)
+	assert.InDelta(t, 5.0, toolResp.Usage["gpu_seconds"], 1e-9)
 	assert.Contains(t, string(toolResp.Payload), "data_test")
 
 	// 4. Verify the completion record landed with the right kind / cost.
@@ -447,8 +447,7 @@ func TestIntegration_ToolDispatch_StructurePrediction(t *testing.T) {
 	assert.Equal(t, "fake-boltz", got.Backend)
 	assert.Equal(t, "success", got.Status)
 	assert.Equal(t, "structure-prediction", got.ToolKind)
-	require.NotNil(t, got.GPUSeconds)
-	assert.InDelta(t, 5.0, *got.GPUSeconds, 1e-9)
+	assert.InDelta(t, 5.0, got.Usage["gpu_seconds"], 1e-9)
 	require.NotNil(t, got.CostUSD)
 	// cost = 5.0 s × $0.001/s = $0.005
 	assert.InDelta(t, 0.005, *got.CostUSD, 1e-9)
@@ -484,7 +483,7 @@ func TestIntegration_ChatAndToolCoexist(t *testing.T) {
 		mustMarshal(t, map[string]any{
 			"name": "boltz", "kind": "tool", "tool_kind": "structure-prediction",
 			"endpoint": toolUpstream.URL, "max_concurrency": 1,
-			"cost_per_gpu_second": 0.001,
+			"rates": map[string]float64{"gpu_seconds": 0.001},
 		}),
 	} {
 		resp := postJSON(t, base+"/api/v1/backends", body)

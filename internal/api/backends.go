@@ -25,13 +25,13 @@ type BackendDeps struct {
 
 // RegisterBackendRoutes mounts the backend endpoints onto r. Routes:
 //
-//	POST   /api/v1/backends         (create; name in body)
+//	POST   /api/v1/backends         (create, name in body)
 //	GET    /api/v1/backends         (list)
 //	GET    /api/v1/backends/{name}
 //	PATCH  /api/v1/backends/{name}
 //	DELETE /api/v1/backends/{name}
 //
-// There is no PUT; backends are explicitly created with POST. To change
+// There is no PUT, backends are explicitly created with POST. To change
 // immutable fields (name, model_id), delete and re-create.
 func RegisterBackendRoutes(r chi.Router, deps BackendDeps) {
 	h := &backendHandler{deps: deps}
@@ -71,8 +71,8 @@ type createRequest struct {
 	OutputCostPerMtoken *float64 `json:"output_cost_per_mtoken,omitempty"`
 
 	// Tool fields:
-	ToolKind         string   `json:"tool_kind,omitempty"`
-	CostPerGPUSecond *float64 `json:"cost_per_gpu_second,omitempty"`
+	ToolKind string             `json:"tool_kind,omitempty"`
+	Rates    map[string]float64 `json:"rates,omitempty"`
 }
 
 func (h *backendHandler) create(w http.ResponseWriter, r *http.Request) {
@@ -128,7 +128,7 @@ func (h *backendHandler) create(w http.ResponseWriter, r *http.Request) {
 		Quality:              req.Quality,
 		RatePerSecond:        req.RatePerSecond,
 		Kind:                 kind,
-		CostPerGPUSecond:     req.CostPerGPUSecond,
+		Rates:                req.Rates,
 	}
 	if req.ModelID != "" {
 		b.ModelID = &req.ModelID

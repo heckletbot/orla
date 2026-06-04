@@ -23,24 +23,26 @@ import (
 // CompletionRecord is one row in the completion_records table.
 // Pointers represent NULL-able columns.
 //
-// LLM dispatches populate PromptTokens / CompletionTokens; tool
-// dispatches populate GPUSeconds / ToolKind. Both leave the other
-// kind's fields as nil. CostUSD is computed by the proxy at write
-// time (token rates × tokens for LLM, gpu_seconds × $/s for tool).
+// LLM dispatches populate PromptTokens and CompletionTokens. Tool
+// dispatches populate Usage with the resources the tool reported, and
+// ToolKind with the tool family. Both leave the other kind's fields
+// empty. CostUSD is the final dollar amount, computed by the proxy at
+// write time from token rates for LLMs or from Usage and Rates for
+// tools.
 type CompletionRecord struct {
-	CompletionID     string            `json:"completion_id"`
-	StageID          string            `json:"stage_id"`
-	WorkflowRun      string            `json:"workflow_run,omitempty"`
-	Backend          string            `json:"backend"`
-	Status           string            `json:"status"`
-	PromptTokens     *int              `json:"prompt_tokens,omitempty"`
-	CompletionTokens *int              `json:"completion_tokens,omitempty"`
-	LatencyMs        *int              `json:"latency_ms,omitempty"`
-	CostUSD          *float64          `json:"cost_usd,omitempty"`
-	GPUSeconds       *float64          `json:"gpu_seconds,omitempty"`
-	ToolKind         string            `json:"tool_kind,omitempty"`
-	Tags             map[string]string `json:"tags,omitempty"`
-	CreatedAt        time.Time         `json:"created_at"`
+	CompletionID     string             `json:"completion_id"`
+	StageID          string             `json:"stage_id"`
+	WorkflowRun      string             `json:"workflow_run,omitempty"`
+	Backend          string             `json:"backend"`
+	Status           string             `json:"status"`
+	PromptTokens     *int               `json:"prompt_tokens,omitempty"`
+	CompletionTokens *int               `json:"completion_tokens,omitempty"`
+	LatencyMs        *int               `json:"latency_ms,omitempty"`
+	CostUSD          *float64           `json:"cost_usd,omitempty"`
+	Usage            map[string]float64 `json:"usage,omitempty"`
+	ToolKind         string             `json:"tool_kind,omitempty"`
+	Tags             map[string]string  `json:"tags,omitempty"`
+	CreatedAt        time.Time          `json:"created_at"`
 }
 
 // CompletionWriterConfig is the input to NewCompletionWriter.
@@ -53,7 +55,7 @@ type CompletionWriterConfig struct {
 }
 
 // CompletionWriter is a typed wrapper over storage.BatchWriter for
-// completion records. Submit is non-blocking; overflows are dropped
+// completion records. Submit is non-blocking, overflows are dropped
 // and counted in Drops.
 type CompletionWriter struct {
 	bw *storage.BatchWriter[*CompletionRecord]
@@ -77,7 +79,7 @@ func NewCompletionWriter(cfg CompletionWriterConfig) *CompletionWriter {
 }
 
 // Submit enqueues a record. Returns false if the writer is closed or
-// the buffer is full; either case is counted in Drops.
+// the buffer is full, either case is counted in Drops.
 func (w *CompletionWriter) Submit(rec *CompletionRecord) bool {
 	return w.bw.Submit(rec)
 }
@@ -100,7 +102,7 @@ func flushCompletions(pool *pgxpool.Pool) storage.FlushFunc[*CompletionRecord] {
 	columns := []string{
 		"completion_id", "stage_id", "workflow_run", "backend", "status",
 		"prompt_tokens", "completion_tokens", "latency_ms", "cost_usd",
-		"tags", "created_at", "gpu_seconds", "tool_kind",
+		"tags", "created_at", "usage", "tool_kind",
 	}
 	return func(ctx context.Context, items []*CompletionRecord) error {
 		conn, err := pool.Acquire(ctx)
@@ -115,6 +117,10 @@ func flushCompletions(pool *pgxpool.Pool) storage.FlushFunc[*CompletionRecord] {
 			if err != nil {
 				tagsBytes = []byte("{}")
 			}
+			usageBytes, err := json.Marshal(rec.Usage)
+			if err != nil || rec.Usage == nil {
+				usageBytes = []byte("{}")
+			}
 			rows = append(rows, []any{
 				rec.CompletionID,
 				rec.StageID,
@@ -127,7 +133,7 @@ func flushCompletions(pool *pgxpool.Pool) storage.FlushFunc[*CompletionRecord] {
 				rec.CostUSD,
 				tagsBytes,
 				rec.CreatedAt,
-				rec.GPUSeconds,
+				usageBytes,
 				nullableString(rec.ToolKind),
 			})
 		}

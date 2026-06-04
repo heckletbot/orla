@@ -20,7 +20,7 @@ type Querier interface {
 	ListBackends(ctx context.Context) ([]Backend, error)
 	// Returns completion records for a stage, optionally filtered by
 	// created_at > since. Pass a zero timestamptz to skip the filter.
-	ListStageCompletions(ctx context.Context, arg ListStageCompletionsParams) ([]CompletionRecord, error)
+	ListStageCompletions(ctx context.Context, arg ListStageCompletionsParams) ([]ListStageCompletionsRow, error)
 	ListStageFeedback(ctx context.Context, arg ListStageFeedbackParams) ([]Feedback, error)
 	ListStages(ctx context.Context) ([]Stage, error)
 	ReplaceStage(ctx context.Context, arg ReplaceStageParams) (Stage, error)

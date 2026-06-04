@@ -14,7 +14,7 @@ import (
 const listStageCompletions = `-- name: ListStageCompletions :many
 SELECT completion_id, stage_id, workflow_run, backend, status,
        prompt_tokens, completion_tokens, latency_ms, cost_usd,
-       tags, created_at, gpu_seconds, tool_kind
+       tags, created_at, usage, tool_kind
 FROM completion_records
 WHERE stage_id = $1
   AND created_at > COALESCE($2::timestamptz, '-infinity'::timestamptz)
@@ -28,17 +28,33 @@ type ListStageCompletionsParams struct {
 	LimitCount int32
 }
 
+type ListStageCompletionsRow struct {
+	CompletionID     string
+	StageID          string
+	WorkflowRun      *string
+	Backend          string
+	Status           string
+	PromptTokens     *int32
+	CompletionTokens *int32
+	LatencyMs        *int32
+	CostUsd          *float64
+	Tags             []byte
+	CreatedAt        pgtype.Timestamptz
+	Usage            []byte
+	ToolKind         *string
+}
+
 // Returns completion records for a stage, optionally filtered by
 // created_at > since. Pass a zero timestamptz to skip the filter.
-func (q *Queries) ListStageCompletions(ctx context.Context, arg ListStageCompletionsParams) ([]CompletionRecord, error) {
+func (q *Queries) ListStageCompletions(ctx context.Context, arg ListStageCompletionsParams) ([]ListStageCompletionsRow, error) {
 	rows, err := q.db.Query(ctx, listStageCompletions, arg.StageID, arg.Since, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []CompletionRecord{}
+	items := []ListStageCompletionsRow{}
 	for rows.Next() {
-		var i CompletionRecord
+		var i ListStageCompletionsRow
 		if err := rows.Scan(
 			&i.CompletionID,
 			&i.StageID,
@@ -51,7 +67,7 @@ func (q *Queries) ListStageCompletions(ctx context.Context, arg ListStageComplet
 			&i.CostUsd,
 			&i.Tags,
 			&i.CreatedAt,
-			&i.GpuSeconds,
+			&i.Usage,
 			&i.ToolKind,
 		); err != nil {
 			return nil, err

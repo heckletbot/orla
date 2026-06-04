@@ -110,7 +110,7 @@ func sinceParam(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t, Valid: true}
 }
 
-func rowToCompletionRecord(row db.CompletionRecord) (*CompletionRecord, error) {
+func rowToCompletionRecord(row db.ListStageCompletionsRow) (*CompletionRecord, error) {
 	rec := &CompletionRecord{
 		CompletionID: row.CompletionID,
 		StageID:      row.StageID,
@@ -137,9 +137,11 @@ func rowToCompletionRecord(row db.CompletionRecord) (*CompletionRecord, error) {
 		v := *row.CostUsd
 		rec.CostUSD = &v
 	}
-	if row.GpuSeconds != nil {
-		v := *row.GpuSeconds
-		rec.GPUSeconds = &v
+	if len(row.Usage) > 0 && string(row.Usage) != "{}" {
+		var usage map[string]float64
+		if err := json.Unmarshal(row.Usage, &usage); err == nil {
+			rec.Usage = usage
+		}
 	}
 	if row.ToolKind != nil {
 		rec.ToolKind = *row.ToolKind

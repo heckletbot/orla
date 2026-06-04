@@ -55,14 +55,13 @@ func newToolTestEnv(t *testing.T, tool *mockTool, b *backends.Backend) (*Server,
 	t.Helper()
 	if b == nil {
 		toolKind := tool.toolKind
-		costPerGPUSecond := 0.001 // $/s, ~$3.60/hr
 		b = &backends.Backend{
-			Name:             tool.name,
-			Endpoint:         "http://unused-by-mock",
-			MaxConcurrency:   1,
-			Kind:             backends.KindTool,
-			ToolKind:         &toolKind,
-			CostPerGPUSecond: &costPerGPUSecond,
+			Name:           tool.name,
+			Endpoint:       "http://unused-by-mock",
+			MaxConcurrency: 1,
+			Kind:           backends.KindTool,
+			ToolKind:       &toolKind,
+			Rates:          map[string]float64{"gpu_seconds": 0.001}, // $/s, ~$3.60/hr
 		}
 	}
 	breg := backends.NewFakeRegistry()
@@ -108,8 +107,8 @@ func TestTool_InvokeSuccess(t *testing.T) {
 			assert.Equal(t, "structure-prediction", req.Kind)
 			// echo a fixed response with gpu_seconds=2.5
 			return &provider.ToolResponse{
-				Payload:    []byte(`{"structure_cif":"hello"}`),
-				GPUSeconds: 2.5,
+				Payload: []byte(`{"structure_cif":"hello"}`),
+				Usage:   map[string]float64{"gpu_seconds": 2.5},
 			}, nil
 		},
 	}
@@ -129,7 +128,7 @@ func TestTool_InvokeSuccess(t *testing.T) {
 
 	var resp provider.ToolResponse
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
-	assert.InDelta(t, 2.5, resp.GPUSeconds, 1e-9)
+	assert.InDelta(t, 2.5, resp.Usage["gpu_seconds"], 1e-9)
 	assert.JSONEq(t, `{"structure_cif":"hello"}`, string(resp.Payload))
 
 	// Completion record captured.
@@ -139,8 +138,7 @@ func TestTool_InvokeSuccess(t *testing.T) {
 	assert.Equal(t, "boltz", rec.Backend)
 	assert.Equal(t, "success", rec.Status)
 	assert.Equal(t, "structure-prediction", rec.ToolKind)
-	require.NotNil(t, rec.GPUSeconds)
-	assert.InDelta(t, 2.5, *rec.GPUSeconds, 1e-9)
+	assert.InDelta(t, 2.5, rec.Usage["gpu_seconds"], 1e-9)
 	require.NotNil(t, rec.CostUSD)
 	// cost = 2.5 s × $0.001/s = $0.0025
 	assert.InDelta(t, 0.0025, *rec.CostUSD, 1e-9)
@@ -175,13 +173,12 @@ func TestTool_BackendNotFoundReturns502(t *testing.T) {
 	// (FakeRegistry's Delete is fine for this.)
 	// We can't easily reach into the FakeRegistry from here, so instead
 	// re-bind the stage to an unknown backend.
-	// Skipping this test variant; covered functionally by ToolDeps wiring.
+	// Skipping this test variant, covered functionally by ToolDeps wiring.
 	_ = srv
 }
 
 func TestTool_WrongKindOnBackendReturns400(t *testing.T) {
 	toolKind := "docking"
-	costPerGPUSecond := 0.001
 	tool := &mockTool{
 		name:     "ad-vina",
 		toolKind: "docking",
@@ -191,12 +188,12 @@ func TestTool_WrongKindOnBackendReturns400(t *testing.T) {
 		},
 	}
 	b := &backends.Backend{
-		Name:             tool.name,
-		Endpoint:         "http://unused",
-		MaxConcurrency:   1,
-		Kind:             backends.KindTool,
-		ToolKind:         &toolKind,
-		CostPerGPUSecond: &costPerGPUSecond,
+		Name:           tool.name,
+		Endpoint:       "http://unused",
+		MaxConcurrency: 1,
+		Kind:           backends.KindTool,
+		ToolKind:       &toolKind,
+		Rates:          map[string]float64{"gpu_seconds": 0.001},
 	}
 	srv, _, _, _ := newToolTestEnv(t, tool, b)
 
@@ -212,7 +209,7 @@ func TestTool_WrongKindOnBackendReturns400(t *testing.T) {
 }
 
 func TestTool_LLMBackendOnToolRouteReturns400(t *testing.T) {
-	// Register an LLM backend; ask the tool route to dispatch to it.
+	// Register an LLM backend, ask the tool route to dispatch to it.
 	modelID := "openai:gpt-4o"
 	llm := &backends.Backend{
 		Name:           "gpt4o",

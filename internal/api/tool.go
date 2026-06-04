@@ -3,7 +3,7 @@
 // The wire shape mirrors the OpenAI-compatible chat path's role of
 // "developer hands orla a request, orla routes by stage, records
 // completion + cost, returns the response". For tool dispatches the
-// request and response are kind-specific JSON payloads; orla is
+// request and response are kind-specific JSON payloads, orla is
 // agnostic to their shapes, it just routes, accounts, and feeds
 // the mapper.
 
@@ -148,13 +148,10 @@ func (h *toolHandler) invoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Compute cost: gpu_seconds × $/gpu-second.
-	var costUSD *float64
-	if bk.CostPerGPUSecond != nil && resp.GPUSeconds > 0 {
-		c := resp.GPUSeconds * *bk.CostPerGPUSecond
-		costUSD = &c
-	}
-	gpuSeconds := resp.GPUSeconds
+	// Compute cost. If the tool reported its own cost directly, use
+	// that. Otherwise sum the dot product of reported usage with the
+	// backend's rates.
+	costUSD := computeToolCost(resp, bk.Rates)
 
 	h.recordToolCompletion(&toolCompletionInputs{
 		completionID: completionID,
@@ -164,7 +161,7 @@ func (h *toolHandler) invoke(w http.ResponseWriter, r *http.Request) {
 		status:       "success",
 		latencyMs:    &latencyMs,
 		costUSD:      costUSD,
-		gpuSeconds:   &gpuSeconds,
+		usage:        resp.Usage,
 	})
 	h.emitMetrics(rc.Stage, backendName, "success", latencyMs)
 
@@ -184,7 +181,7 @@ type toolCompletionInputs struct {
 	status       string
 	latencyMs    *int
 	costUSD      *float64
-	gpuSeconds   *float64
+	usage        map[string]float64
 }
 
 func (h *toolHandler) recordToolCompletion(in *toolCompletionInputs) {
@@ -199,11 +196,41 @@ func (h *toolHandler) recordToolCompletion(in *toolCompletionInputs) {
 		Status:       in.status,
 		LatencyMs:    in.latencyMs,
 		CostUSD:      in.costUSD,
-		GPUSeconds:   in.gpuSeconds,
+		Usage:        in.usage,
 		ToolKind:     in.toolKind,
 		Tags:         in.rc.Tags,
 		CreatedAt:    time.Now(),
 	})
+}
+
+// computeToolCost rolls a tool response and a backend's rates into a
+// single dollar amount. If the tool reported a cost directly, that
+// wins. Otherwise cost is the sum over each (key, amount) in Usage of
+// amount times the matching Rates[key]. Returns nil when neither
+// signal is present.
+func computeToolCost(resp *provider.ToolResponse, rates map[string]float64) *float64 {
+	if resp == nil {
+		return nil
+	}
+	if resp.CostUSD != nil {
+		c := *resp.CostUSD
+		return &c
+	}
+	if len(resp.Usage) == 0 || len(rates) == 0 {
+		return nil
+	}
+	var total float64
+	var matched bool
+	for key, amount := range resp.Usage {
+		if rate, ok := rates[key]; ok {
+			total += amount * rate
+			matched = true
+		}
+	}
+	if !matched {
+		return nil
+	}
+	return &total
 }
 
 func (h *toolHandler) emitMetrics(stage, backend, status string, latencyMs int) {

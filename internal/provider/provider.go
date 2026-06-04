@@ -7,12 +7,12 @@
 //
 //   - Tool backends speak a kind-specific JSON RPC over HTTP for
 //     scientific computation (structure prediction, docking, etc.).
-//     Subpackages under provider/ implement ToolProvider; the first
+//     Subpackages under provider/ implement ToolProvider, the first
 //     is provider/structurepred.
 //
 // The Backend interface is the common identity both share. Scheduler
 // machinery (concurrency caps, rate limits, telemetry) is kind-agnostic
-// and operates on Backend; the proxy layer is kind-aware and routes
+// and operates on Backend, the proxy layer is kind-aware and routes
 // per-kind to LLMProvider.Chat or ToolProvider.Invoke.
 package provider
 
@@ -38,7 +38,7 @@ type Backend interface {
 // LLMProvider is implemented by OpenAI-compatible chat backends.
 //
 // This is what existing orla code used to call "Provider". The
-// rename clears the way for tool providers to coexist; behavior is
+// rename clears the way for tool providers to coexist, behavior is
 // otherwise unchanged.
 type LLMProvider interface {
 	Backend
@@ -53,7 +53,7 @@ type LLMProvider interface {
 	Chat(ctx context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error)
 
 	// ChatStream opens a streaming chat completion. The caller must
-	// Close() the stream when done; concurrency slots are held by
+	// Close() the stream when done, concurrency slots are held by
 	// the scheduler until that happens.
 	ChatStream(ctx context.Context, params openai.ChatCompletionNewParams) *ssestream.Stream[openai.ChatCompletionChunk]
 }
@@ -70,12 +70,12 @@ type ToolProvider interface {
 	ToolKind() string
 
 	// Invoke dispatches a tool request. Payload schema is kind-specific
-	// and opaque to the scheduler; the proxy decodes per kind.
+	// and opaque to the scheduler, the proxy decodes per kind.
 	Invoke(ctx context.Context, req ToolRequest) (*ToolResponse, error)
 }
 
 // ToolRequest is the wire-shape envelope the proxy passes to
-// ToolProvider.Invoke. Payload is kind-specific JSON; the concrete
+// ToolProvider.Invoke. Payload is kind-specific JSON, the concrete
 // provider decodes it according to its ToolKind.
 type ToolRequest struct {
 	Kind    string          `json:"kind"`
@@ -83,13 +83,30 @@ type ToolRequest struct {
 }
 
 // ToolResponse is the wire-shape envelope returned from
-// ToolProvider.Invoke. Payload is kind-specific. GPUSeconds is the
-// measured GPU compute time for cost accounting (the wrapper service
-// reports it). Metadata is opaque diagnostic data.
+// ToolProvider.Invoke. Payload is kind-specific.
+//
+// Usage reports resource consumption for cost accounting. The map
+// holds resource_name to amount used. Keys are tool-defined.
+// Examples:
+//
+//	{"gpu_seconds": 5.0}            a GPU-billed tool
+//	{"cpu_seconds": 12.3, "calls": 1}  a CPU-billed API
+//	{"molecules_docked": 200}       per-unit billed
+//
+// Orla looks up matching rates on the backend record and computes
+// cost as the dot product of usage and rates.
+//
+// CostUSD lets a tool that already knows its own price short-circuit
+// the rates lookup. If non-nil, orla uses this value directly and
+// ignores Usage for cost accounting. Usage is still recorded for
+// observability.
+//
+// Metadata is opaque diagnostic data the tool wants to surface.
 type ToolResponse struct {
-	Payload    json.RawMessage `json:"payload"`
-	GPUSeconds float64         `json:"gpu_seconds,omitempty"`
-	Metadata   map[string]any  `json:"metadata,omitempty"`
+	Payload  json.RawMessage    `json:"payload"`
+	Usage    map[string]float64 `json:"usage,omitempty"`
+	CostUSD  *float64           `json:"cost_usd,omitempty"`
+	Metadata map[string]any     `json:"metadata,omitempty"`
 }
 
 // ParseModelID splits a backend model id of the form "provider:model"

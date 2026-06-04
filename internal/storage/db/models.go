@@ -14,15 +14,15 @@ type Backend struct {
 	ModelID             *string
 	ApiKeyEnvVar        string
 	MaxConcurrency      int32
-	InputCostPerMtoken  *float64
-	OutputCostPerMtoken *float64
-	Quality             *float64
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
 	RatePerSecond       *float64
+	Quality             *float64
 	Kind                string
 	ToolKind            *string
-	CostPerGpuSecond    *float64
+	InputCostPerMtoken  *float64
+	OutputCostPerMtoken *float64
+	Rates               []byte
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
 }
 
 type CompletionRecord struct {
@@ -33,12 +33,12 @@ type CompletionRecord struct {
 	Status           string
 	PromptTokens     *int32
 	CompletionTokens *int32
+	Usage            []byte
+	ToolKind         *string
 	LatencyMs        *int32
 	CostUsd          *float64
 	Tags             []byte
 	CreatedAt        pgtype.Timestamptz
-	GpuSeconds       *float64
-	ToolKind         *string
 }
 
 type Feedback struct {

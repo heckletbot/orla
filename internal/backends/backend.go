@@ -1,20 +1,22 @@
 // Package backends owns the LLM-or-tool backend record (endpoint,
 // model id / tool kind, concurrency cap, cost/quality priors) and the
 // registry that persists it. Backends are explicitly registered by
-// the platform engineer; the proxy refuses to dispatch to an unknown
+// the platform engineer, the proxy refuses to dispatch to an unknown
 // backend.
 package backends
 
 import "time"
 
-// Kind discriminates between the two backend flavors:
+// Kind discriminates between the two backend flavors.
 //
-//   - KindLLM:  OpenAI-compatible chat completion backend.
-//     Cost is token-denominated; ModelID is required.
+//   - KindLLM is an OpenAI-compatible chat completion backend.
+//     Cost comes from InputCostPerMtoken and OutputCostPerMtoken.
+//     ModelID is required.
 //
-//   - KindTool: scientific computation tool (structure prediction,
-//     docking, etc.). Cost is GPU-second-denominated; ToolKind is
-//     required; ModelID is unused.
+//   - KindTool is any non-LLM backend such as a structure-prediction
+//     service, a docking engine, or an external HTTP API. Cost comes
+//     from the generic Rates map, with the tool reporting matching
+//     usage at dispatch time. ToolKind is required, ModelID is unused.
 type Kind string
 
 const (
@@ -25,7 +27,7 @@ const (
 // Backend is the persistent record for a single backend.
 //
 // Cost and quality are platform-engineer-supplied priors. orla does
-// not act on them; the mapper does. They are persisted so the mapper
+// not act on them, the mapper does. They are persisted so the mapper
 // can read them as part of its state.
 type Backend struct {
 	Name           string   `json:"name"`
@@ -52,12 +54,23 @@ type Backend struct {
 	InputCostPerMtoken  *float64 `json:"input_cost_per_mtoken,omitempty"`
 	OutputCostPerMtoken *float64 `json:"output_cost_per_mtoken,omitempty"`
 
-	// ToolKind identifies the family of tool (e.g., "structure-prediction",
-	// "docking"). Required for KindTool, unused for KindLLM.
+	// ToolKind identifies the family of tool, such as "structure-prediction"
+	// or "docking". Required for KindTool, unused for KindLLM.
 	ToolKind *string `json:"tool_kind,omitempty"`
 
-	// Tool cost model: per-GPU-second rate. NULL for KindLLM.
-	CostPerGPUSecond *float64 `json:"cost_per_gpu_second,omitempty"`
+	// Rates is the generic per-resource pricing map for KindTool
+	// backends. Keys are resource names that tool responses report in
+	// their Usage map. Values are USD-per-unit. Examples:
+	//
+	//   {"gpu_seconds": 0.001}
+	//   {"cpu_seconds": 0.0001, "calls": 0.005}
+	//
+	// orla computes cost as the dot product of usage and rates. If a
+	// tool reports Usage for a key not present in Rates, that key
+	// contributes zero. KindLLM backends may also populate Rates if
+	// the LLM has unusual pricing dimensions, though the standard
+	// token rates suffice for most cases.
+	Rates map[string]float64 `json:"rates,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -68,12 +81,12 @@ type Backend struct {
 // cannot be patched, to change them, delete and re-create the
 // backend.
 type PatchRequest struct {
-	Endpoint            *string  `json:"endpoint,omitempty"`
-	APIKeyEnvVar        *string  `json:"api_key_env_var,omitempty"`
-	MaxConcurrency      *int32   `json:"max_concurrency,omitempty"`
-	InputCostPerMtoken  *float64 `json:"input_cost_per_mtoken,omitempty"`
-	OutputCostPerMtoken *float64 `json:"output_cost_per_mtoken,omitempty"`
-	Quality             *float64 `json:"quality,omitempty"`
-	RatePerSecond       *float64 `json:"rate_per_second,omitempty"`
-	CostPerGPUSecond    *float64 `json:"cost_per_gpu_second,omitempty"`
+	Endpoint            *string            `json:"endpoint,omitempty"`
+	APIKeyEnvVar        *string            `json:"api_key_env_var,omitempty"`
+	MaxConcurrency      *int32             `json:"max_concurrency,omitempty"`
+	InputCostPerMtoken  *float64           `json:"input_cost_per_mtoken,omitempty"`
+	OutputCostPerMtoken *float64           `json:"output_cost_per_mtoken,omitempty"`
+	Quality             *float64           `json:"quality,omitempty"`
+	RatePerSecond       *float64           `json:"rate_per_second,omitempty"`
+	Rates               map[string]float64 `json:"rates,omitempty"`
 }

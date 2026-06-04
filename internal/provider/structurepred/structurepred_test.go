@@ -57,9 +57,9 @@ func TestClient_Invoke_RoundTrip(t *testing.T) {
 		})
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(provider.ToolResponse{
-			Payload:    respPayload,
-			GPUSeconds: 12.3,
-			Metadata:   map[string]any{"backend_version": "boltz-2.0.1"},
+			Payload:  respPayload,
+			Usage:    map[string]float64{"gpu_seconds": 12.3},
+			Metadata: map[string]any{"backend_version": "boltz-2.0.1"},
 		})
 	}))
 	t.Cleanup(srv.Close)
@@ -74,7 +74,7 @@ func TestClient_Invoke_RoundTrip(t *testing.T) {
 		LigandSMILES: []string{"CCO"},
 	}))
 	require.NoError(t, err)
-	assert.InDelta(t, 12.3, resp.GPUSeconds, 1e-9)
+	assert.InDelta(t, 12.3, resp.Usage["gpu_seconds"], 1e-9)
 	assert.Equal(t, "boltz-2.0.1", resp.Metadata["backend_version"])
 
 	out := unwrapPayload(t, resp)

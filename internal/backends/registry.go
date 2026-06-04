@@ -2,6 +2,7 @@ package backends
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -20,7 +21,7 @@ var ErrNotFound = errors.New("backends: not found")
 var ErrAlreadyExists = errors.New("backends: already exists")
 
 // Registry is the interface used by the API handlers and (later) the
-// proxy. The Postgres implementation is in this file; tests use the
+// proxy. The Postgres implementation is in this file, tests use the
 // in-memory FakeRegistry.
 type Registry interface {
 	// Insert creates a backend. Returns ErrAlreadyExists if a backend
@@ -61,11 +62,14 @@ func NewPostgresRegistry(pool *pgxpool.Pool) *PostgresRegistry {
 var _ Registry = (*PostgresRegistry)(nil)
 
 func (r *PostgresRegistry) Insert(ctx context.Context, b *Backend) (*Backend, error) {
-	// Default Kind to LLM for backwards compatibility, older callers
-	// (and the existing finance/bio demos) leave it unset.
+	// Default Kind to LLM, older callers and existing demos leave it unset.
 	kind := b.Kind
 	if kind == "" {
 		kind = KindLLM
+	}
+	ratesBytes, err := marshalRates(b.Rates)
+	if err != nil {
+		return nil, fmt.Errorf("backends: insert: encode rates: %w", err)
 	}
 	row, err := r.queries.InsertBackend(ctx, db.InsertBackendParams{
 		Name:                b.Name,
@@ -79,7 +83,7 @@ func (r *PostgresRegistry) Insert(ctx context.Context, b *Backend) (*Backend, er
 		RatePerSecond:       b.RatePerSecond,
 		Kind:                string(kind),
 		ToolKind:            b.ToolKind,
-		CostPerGpuSecond:    b.CostPerGPUSecond,
+		Rates:               ratesBytes,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -153,8 +157,12 @@ func (r *PostgresRegistry) Patch(ctx context.Context, name string, p PatchReques
 	if p.RatePerSecond != nil {
 		current.RatePerSecond = p.RatePerSecond
 	}
-	if p.CostPerGPUSecond != nil {
-		current.CostPerGpuSecond = p.CostPerGPUSecond
+	if p.Rates != nil {
+		b, err := marshalRates(p.Rates)
+		if err != nil {
+			return nil, fmt.Errorf("backends: patch: encode rates: %w", err)
+		}
+		current.Rates = b
 	}
 
 	updated, err := q.UpdateBackend(ctx, db.UpdateBackendParams{
@@ -169,7 +177,7 @@ func (r *PostgresRegistry) Patch(ctx context.Context, name string, p PatchReques
 		RatePerSecond:       current.RatePerSecond,
 		Kind:                current.Kind,
 		ToolKind:            current.ToolKind,
-		CostPerGpuSecond:    current.CostPerGpuSecond,
+		Rates:               current.Rates,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("backends: patch: write: %w", err)
@@ -212,8 +220,31 @@ func toBackend(row db.Backend) *Backend {
 		RatePerSecond:       row.RatePerSecond,
 		Kind:                Kind(row.Kind),
 		ToolKind:            row.ToolKind,
-		CostPerGPUSecond:    row.CostPerGpuSecond,
+		Rates:               unmarshalRates(row.Rates),
 		CreatedAt:           row.CreatedAt.Time,
 		UpdatedAt:           row.UpdatedAt.Time,
 	}
+}
+
+// marshalRates encodes a rates map to the JSONB bytes the database
+// column wants. Nil and empty maps both round-trip as "{}".
+func marshalRates(m map[string]float64) ([]byte, error) {
+	if len(m) == 0 {
+		return []byte("{}"), nil
+	}
+	return json.Marshal(m)
+}
+
+// unmarshalRates decodes a rates JSONB column into a map. Empty bytes
+// or "{}" returns nil so callers can range over a nil map without a
+// nil-check.
+func unmarshalRates(b []byte) map[string]float64 {
+	if len(b) == 0 || string(b) == "{}" {
+		return nil
+	}
+	var m map[string]float64
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil
+	}
+	return m
 }
