@@ -23,10 +23,10 @@ This project adheres to a Code of Conduct that all contributors are expected to 
 
 ### prerequisites
 
-- Go 1.26+ — check with `go version`
-- [just](https://just.systems) — task runner used for all local pipelines
-- [golangci-lint](https://golangci-lint.run/) v2 — for linting
-- Docker — required by storage integration tests (testcontainers)
+- Go 1.26 or newer. Check with `go version`.
+- [just](https://just.systems). The task runner used for all local pipelines.
+- [golangci-lint](https://golangci-lint.run/) v2. For linting.
+- Docker. Required by the storage integration tests that use testcontainers.
 
 ### setup steps
 
@@ -36,7 +36,7 @@ Verify everything is wired up by running the full local CI pipeline:
 just check
 ```
 
-That runs build, test (with the race detector), lint, and link checks — the same gate CI runs. Individual recipes:
+That runs build, race tests, lint, and link checks. It is the same gate CI runs. Individual recipes:
 
 ```bash
 just build        # compile every package
@@ -59,9 +59,9 @@ just              # list all recipes
 
 2. Write or update tests for your changes.
 
-3. Run `just check` and make sure it's green.
+3. Run `just check` and make sure it is green.
 
-4. Commit your changes with [conventional commit](https://www.conventionalcommits.org/en/v1.0.0/) messages — one sentence each:
+4. Commit your changes with [conventional commit](https://www.conventionalcommits.org/en/v1.0.0/) messages, one sentence each:
 
    ```bash
    git commit -m "feat: add support for batched feedback ingestion"
@@ -73,7 +73,7 @@ We follow [conventional commits](https://www.conventionalcommits.org/en/v1.0.0/)
 
 - `feat: add hot reload support for tool backends`
 - `fix: resolve race in scheduler queue depth metric`
-- `docs: clarify two-persona contract in personas.md`
+- `docs: clarify tag semantics in concepts.md`
 - `test: add coverage for batch writer drop policy`
 - `refactor: simplify config loading logic`
 - `chore: bump go-chi to v5.4`
@@ -97,7 +97,7 @@ We follow [conventional commits](https://www.conventionalcommits.org/en/v1.0.0/)
 
 Before submitting, make sure:
 
-- [ ] You've added tests for new functionality
+- [ ] You have added tests for new functionality
 - [ ] `just check` passes locally
 - [ ] Documentation under `docs/` is updated if behavior or wire contract changed
 - [ ] Commit messages follow the conventional commit format
