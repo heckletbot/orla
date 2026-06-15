@@ -153,6 +153,7 @@ func (h *proxyHandler) serveNonStreaming(w http.ResponseWriter, r *http.Request,
 	start := time.Now()
 	resp, err := p.Chat(r.Context(), params)
 	latencyMs := int(time.Since(start) / time.Millisecond)
+	h.deps.Scheduler.ReportOutcome(backendName, err)
 
 	if err != nil {
 		h.recordCompletion(&completionInputs{
@@ -248,8 +249,14 @@ func (h *proxyHandler) serveStreaming(w http.ResponseWriter, r *http.Request, rc
 
 	latencyMs := int(time.Since(start) / time.Millisecond)
 
-	if err := stream.Err(); err != nil && !errors.Is(err, io.EOF) {
-		errEnv := errorEnvelope{Error: errorBody{Message: err.Error(), Type: "server_error"}}
+	streamErr := stream.Err()
+	if errors.Is(streamErr, io.EOF) {
+		streamErr = nil
+	}
+	h.deps.Scheduler.ReportOutcome(backendName, streamErr)
+
+	if streamErr != nil {
+		errEnv := errorEnvelope{Error: errorBody{Message: streamErr.Error(), Type: "server_error"}}
 		if data, mErr := json.Marshal(errEnv); mErr == nil {
 			_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
@@ -393,6 +400,13 @@ func statusForSchedulerErr(w http.ResponseWriter, err error, backendName string)
 	if errors.Is(err, scheduler.ErrUnknownBackend) {
 		writeError(w, http.StatusBadGateway,
 			fmt.Errorf("backend %q is not registered", backendName))
+		return
+	}
+	if _, ok := errors.AsType[*scheduler.CircuitOpenError](err); ok {
+		// Backend is failing fast. Signal "retry later" with 503 rather than
+		// a generic 500. Retry-After mirrors the breaker's open window.
+		w.Header().Set("Retry-After", "60")
+		writeError(w, http.StatusServiceUnavailable, err)
 		return
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

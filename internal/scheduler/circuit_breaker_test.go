@@ -126,6 +126,24 @@ func TestCircuitBreaker_ConcurrentHalfOpen_OnlyOneProbe(t *testing.T) {
 	assert.Equal(t, 1, probes, "exactly one probe must pass in half-open state")
 }
 
+func TestCircuitBreaker_StaleProbeSelfHeals(t *testing.T) {
+	cb := newCircuitBreaker(1, 60*time.Second)
+	cb.recordFailure()
+	rewindOpen(cb, 61*time.Second)
+
+	require.True(t, cb.allow(), "first probe allowed after timeout")
+	require.True(t, cb.probeInFlight)
+	assert.False(t, cb.allow(), "a fresh in-flight probe blocks a second probe")
+
+	// The probe never reported an outcome, as if the request was canceled
+	// mid-flight. Age it past openTimeout.
+	cb.mu.Lock()
+	cb.probeStartedAt = time.Now().Add(-61 * time.Second)
+	cb.mu.Unlock()
+
+	assert.True(t, cb.allow(), "an abandoned probe must not wedge the breaker")
+}
+
 func TestCircuitBreaker_CircuitOpenError_Message(t *testing.T) {
 	err := &CircuitOpenError{Backend: "gpu-a"}
 	assert.Equal(t, `circuit open for backend "gpu-a": service unavailable`, err.Error())

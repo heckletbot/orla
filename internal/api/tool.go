@@ -136,6 +136,7 @@ func (h *toolHandler) invoke(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	resp, err := tp.Invoke(r.Context(), req)
 	latencyMs := int(time.Since(start) / time.Millisecond)
+	h.deps.Scheduler.ReportOutcome(backendName, err)
 
 	if err != nil {
 		h.recordToolCompletion(&toolCompletionInputs{

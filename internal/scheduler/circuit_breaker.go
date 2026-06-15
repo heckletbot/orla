@@ -31,6 +31,7 @@ type circuitBreaker struct {
 	threshold        int
 	openTimeout      time.Duration
 	probeInFlight    bool
+	probeStartedAt   time.Time
 }
 
 func newCircuitBreaker(threshold int, openTimeout time.Duration) *circuitBreaker {
@@ -60,12 +61,18 @@ func (cb *circuitBreaker) allow() bool {
 		}
 		cb.state = cbHalfOpen
 		cb.probeInFlight = true
+		cb.probeStartedAt = time.Now()
 		return true
 	case cbHalfOpen:
-		if cb.probeInFlight {
+		// Only one probe runs at a time. A probe that never reports an
+		// outcome would otherwise wedge the breaker here forever. So a
+		// probe older than openTimeout is treated as abandoned and a
+		// fresh one is allowed.
+		if cb.probeInFlight && time.Since(cb.probeStartedAt) < cb.openTimeout {
 			return false
 		}
 		cb.probeInFlight = true
+		cb.probeStartedAt = time.Now()
 		return true
 	}
 	return true

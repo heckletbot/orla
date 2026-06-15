@@ -182,6 +182,28 @@ func (s *Scheduler) Dispatch(ctx context.Context, name string, params openai.Cha
 }
 
 
+// ReportOutcome records the result of a dispatch against the named backend's
+// circuit breaker. A nil err is a success that resets the breaker. A backend
+// error such as a 5xx, a 429, or a connection failure counts as a failure.
+// Client errors and cancellations are ignored. The call is a no-op when the
+// backend is not registered.
+//
+// Callers that acquire a provider through Acquire, AcquireLLM, or AcquireTool
+// and run the request themselves must call this after the provider call.
+// Otherwise the breaker only sees Dispatch outcomes and never trips on
+// streaming or tool failures.
+func (s *Scheduler) ReportOutcome(name string, err error) {
+	s.mu.RLock()
+	exec, ok := s.executors[name]
+	s.mu.RUnlock()
+	if !ok {
+		// The backend was deregistered between Acquire and now, so its
+		// breaker no longer exists and there is nothing to record.
+		return
+	}
+	exec.recordOutcome(err)
+}
+
 // CircuitState returns "closed", "open", or "half-open" for the named
 // backend. Returns "closed" if the backend is not registered.
 func (s *Scheduler) CircuitState(name string) string {

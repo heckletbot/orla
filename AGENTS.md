@@ -151,9 +151,36 @@ The rules under "Writing prose" apply, plus:
   per declaration, not a docblock with `@param`/`@returns`/`@example`
   decoration. Go doc tooling reads the comment line directly above
   the symbol.
+- **Write comments as prose a human reads top to bottom.** Make them
+  correct, clear, and concise. No unnecessary parentheses, semicolons,
+  colons, or dashes. When a parenthetical or a clause after a colon
+  carries real weight, give it its own sentence instead. The em-dash
+  and the semicolon are banned in comments as they are in all prose.
 - Package docs go in one file per package and explain the package's
   purpose in a paragraph or two. They are an exception to the
   "default to no comment" rule.
+
+### Doc comment form
+
+When a comment is warranted, for an exported identifier, a package
+doc, or a non-obvious why, write it the way `gofmt` and `go doc`
+expect. The full guide is [Go Doc Comments](https://go.dev/doc/comment).
+The conventions that matter here:
+
+- Put the comment on the line directly above the declaration with no
+  blank line between them.
+- Begin a doc comment with the name of the thing it documents so it
+  reads as a sentence. `// Acquire blocks until a slot frees.` reads
+  better than `// blocks until a slot frees.`
+- Use complete sentences and end them with a period. A package comment
+  starts with `Package <name>`.
+- Say what a function returns or does for the caller, not how it works
+  inside. Use "reports whether" for a boolean result, never "returns
+  true if ... or not".
+- Name parameters and results directly in the text. No backticks.
+- State a type's concurrency guarantees and any useful zero value when
+  they are not obvious.
+- Mark a removal with a `Deprecated:` paragraph so tooling can flag it.
 
 ## Writing tests
 

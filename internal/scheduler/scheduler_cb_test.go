@@ -135,6 +135,31 @@ func TestScheduler_CircuitDoesNotOpenOnContextCancel(t *testing.T) {
 	assert.Equal(t, "closed", s.CircuitState("b"))
 }
 
+// The proxy and tool handlers run requests through AcquireLLM and AcquireTool
+// and then call ReportOutcome rather than Dispatch. This exercises that path.
+// The breaker must trip on reported failures and reset on a reported success.
+func TestScheduler_ReportOutcomeTripsAndResetsCircuit(t *testing.T) {
+	backendErr := errors.New("connection refused")
+	s := New(cbFactory(nil), cbLogger())
+	t.Cleanup(func() { _ = s.Shutdown(context.Background()) })
+	s.Register(cbBackend("b", 2))
+
+	for range cbSchedThreshold - 1 {
+		s.ReportOutcome("b", backendErr)
+		require.Equal(t, "closed", s.CircuitState("b"), "below threshold stays closed")
+	}
+	s.ReportOutcome("b", backendErr)
+	assert.Equal(t, "open", s.CircuitState("b"), "threshold failures via ReportOutcome must open")
+
+	// A reported success after the open window closes the circuit again.
+	rewindSchedulerCB(s, "b", 61*time.Second)
+	_, release, err := s.AcquireLLM(context.Background(), "b") // consumes the half-open probe
+	require.NoError(t, err)
+	s.ReportOutcome("b", nil)
+	release()
+	assert.Equal(t, "closed", s.CircuitState("b"), "reported success must close the circuit")
+}
+
 func TestScheduler_FastFailWhenCircuitOpen(t *testing.T) {
 	var calls atomic.Int32
 	mock := provider.NewMockProvider().WithName("b").WithChatFunc(
