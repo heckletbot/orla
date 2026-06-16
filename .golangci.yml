@@ -9,6 +9,7 @@ linters:
   enable:
     - bodyclose
     - copyloopvar
+    - depguard
     - errcheck
     - errorlint
     - gosec
@@ -23,6 +24,28 @@ linters:
       excludes:
         - G204  # subprocess with variable — N/A (we don't shell out)
         - G115  # int conversions are validated at boundaries
+        - G107  # request URL is the operator-supplied daemon address in orlactl
+
+    depguard:
+      rules:
+        # orlactl is a thin HTTP client. It must not link the database
+        # driver or the server packages, so it stays a small standalone
+        # binary. It talks to the daemon over HTTP through internal/wire.
+        client-stays-lean:
+          files:
+            - "**/internal/orlaclient/**"
+            - "**/cmd/orlactl/**"
+          deny:
+            - pkg: github.com/jackc/pgx
+              desc: orlactl must not link the database driver; call the daemon over HTTP
+            - pkg: github.com/harvard-cns/orla/internal/storage
+              desc: orlactl must not import server storage; call the daemon over HTTP
+            - pkg: github.com/harvard-cns/orla/internal/backends
+              desc: orlactl must not import server packages; use internal/wire types
+            - pkg: github.com/harvard-cns/orla/internal/stages
+              desc: orlactl must not import server packages; use internal/wire types
+            - pkg: github.com/harvard-cns/orla/internal/scheduler
+              desc: orlactl must not import server packages; use internal/wire types
 
   exclusions:
     rules:

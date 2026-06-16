@@ -54,10 +54,11 @@ fmt:
 sqlc:
     go run github.com/sqlc-dev/sqlc/cmd/sqlc@latest generate
 
-# Build the daemon binary into bin/orla.
+# Build the daemon and CLI binaries into bin/.
 binary:
     @mkdir -p bin
     go build -o bin/orla ./cmd/orla
+    go build -o bin/orlactl ./cmd/orlactl
 
 # Produce coverage.html for the default browser.
 coverage:

@@ -1,0 +1,99 @@
+// Package wire holds the JSON request and response types for orla's
+// control-plane HTTP API. It is shared by the daemon's handlers and the
+// orlactl client and depends only on the standard library, so the client
+// binary never links the database driver or the server packages.
+package wire
+
+import "time"
+
+// CreateBackendRequest is the POST /api/v1/backends body. Kind defaults
+// to "llm" server-side when empty. ModelID is required for llm backends.
+// ToolKind and Rates are required for tool backends.
+type CreateBackendRequest struct {
+	Name           string   `json:"name"`
+	Kind           string   `json:"kind,omitempty"`
+	Endpoint       string   `json:"endpoint"`
+	APIKeyEnvVar   string   `json:"api_key_env_var"`
+	MaxConcurrency int32    `json:"max_concurrency"`
+	Quality        *float64 `json:"quality"`
+	RatePerSecond  *float64 `json:"rate_per_second"`
+
+	ModelID             string   `json:"model_id,omitempty"`
+	InputCostPerMtoken  *float64 `json:"input_cost_per_mtoken,omitempty"`
+	OutputCostPerMtoken *float64 `json:"output_cost_per_mtoken,omitempty"`
+
+	ToolKind string             `json:"tool_kind,omitempty"`
+	Rates    map[string]float64 `json:"rates,omitempty"`
+}
+
+// PatchBackendRequest is the PATCH /api/v1/backends/{name} body. Nil
+// fields are left unchanged. Name, kind, model id, and tool kind cannot
+// be patched.
+type PatchBackendRequest struct {
+	Endpoint            *string             `json:"endpoint,omitempty"`
+	APIKeyEnvVar        *string             `json:"api_key_env_var,omitempty"`
+	MaxConcurrency      *int32              `json:"max_concurrency,omitempty"`
+	InputCostPerMtoken  *float64            `json:"input_cost_per_mtoken,omitempty"`
+	OutputCostPerMtoken *float64            `json:"output_cost_per_mtoken,omitempty"`
+	Quality             *float64            `json:"quality,omitempty"`
+	RatePerSecond       *float64            `json:"rate_per_second,omitempty"`
+	Rates               *map[string]float64 `json:"rates,omitempty"`
+}
+
+// Backend is the JSON the API returns for a backend. CircuitBreaker is
+// live scheduler state, present on reads and empty otherwise.
+type Backend struct {
+	Name                string             `json:"name"`
+	Endpoint            string             `json:"endpoint"`
+	APIKeyEnvVar        string             `json:"api_key_env_var"`
+	MaxConcurrency      int32              `json:"max_concurrency"`
+	Quality             *float64           `json:"quality,omitempty"`
+	RatePerSecond       *float64           `json:"rate_per_second,omitempty"`
+	Kind                string             `json:"kind"`
+	ModelID             *string            `json:"model_id,omitempty"`
+	InputCostPerMtoken  *float64           `json:"input_cost_per_mtoken,omitempty"`
+	OutputCostPerMtoken *float64           `json:"output_cost_per_mtoken,omitempty"`
+	ToolKind            *string            `json:"tool_kind,omitempty"`
+	Rates               map[string]float64 `json:"rates,omitempty"`
+	CircuitBreaker      string             `json:"circuit_breaker,omitempty"`
+	CreatedAt           time.Time          `json:"created_at"`
+	UpdatedAt           time.Time          `json:"updated_at"`
+}
+
+// MapStageRequest is the PUT /api/v1/stages/{id} body. The PUT replaces
+// the record, so omitted fields reset to their zero value.
+type MapStageRequest struct {
+	Backend         string         `json:"backend"`
+	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
+	Labels          map[string]any `json:"labels,omitempty"`
+}
+
+// PatchStageRequest is the PATCH /api/v1/stages/{id} body. Nil fields
+// are left unchanged.
+type PatchStageRequest struct {
+	Backend         *string        `json:"backend,omitempty"`
+	ReasoningEffort *string        `json:"reasoning_effort,omitempty"`
+	Labels          map[string]any `json:"labels,omitempty"`
+}
+
+// Stage is the JSON the API returns for a stage.
+type Stage struct {
+	ID              string         `json:"id"`
+	Backend         string         `json:"backend"`
+	ReasoningEffort string         `json:"reasoning_effort"`
+	Labels          map[string]any `json:"labels"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+}
+
+// FeedbackRequest is the POST /v1/feedback body. CompletionID and StageID
+// are required. Rating, when set, must be between 0 and 1. Agents post
+// this after a call so the mapper has an outcome signal.
+type FeedbackRequest struct {
+	CompletionID string   `json:"completion_id"`
+	StageID      string   `json:"stage_id"`
+	WorkflowRun  string   `json:"workflow_run,omitempty"`
+	Rating       *float64 `json:"rating,omitempty"`
+	Labels       []string `json:"labels,omitempty"`
+	Notes        string   `json:"notes,omitempty"`
+}

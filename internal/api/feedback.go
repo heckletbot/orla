@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/harvard-cns/orla/internal/telemetry"
+	"github.com/harvard-cns/orla/internal/wire"
 )
 
 // FeedbackSink is the subset of telemetry.FeedbackWriter used by the
@@ -37,21 +38,8 @@ type feedbackHandler struct {
 	deps FeedbackDeps
 }
 
-// feedbackRequest is the wire shape. completion_id and stage_id are
-// required, the developer's SDK can pull stage_id from the original
-// chat completion call. Doing it on the developer side avoids a sync
-// DB lookup against an async-batched table.
-type feedbackRequest struct {
-	CompletionID string   `json:"completion_id"`
-	StageID      string   `json:"stage_id"`
-	WorkflowRun  string   `json:"workflow_run,omitempty"`
-	Rating       *float64 `json:"rating,omitempty"`
-	Labels       []string `json:"labels,omitempty"`
-	Notes        string   `json:"notes,omitempty"`
-}
-
 func (h *feedbackHandler) submit(w http.ResponseWriter, r *http.Request) {
-	var req feedbackRequest
+	var req wire.FeedbackRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}

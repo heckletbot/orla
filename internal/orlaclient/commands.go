@@ -1,0 +1,269 @@
+package orlaclient
+
+import (
+	"cmp"
+	"encoding/json"
+	"fmt"
+	"os"
+	"text/tabwriter"
+
+	"github.com/spf13/cobra"
+
+	"github.com/harvard-cns/orla/internal/wire"
+)
+
+// NewRootCmd builds the orlactl command tree. The daemon address comes
+// from --addr, falling back to ORLA_ADDR and then localhost:8081.
+func NewRootCmd() *cobra.Command {
+	var addr string
+	root := &cobra.Command{
+		Use:           "orlactl",
+		Short:         "Command-line client for the orla daemon",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+	root.PersistentFlags().StringVar(&addr, "addr",
+		cmp.Or(os.Getenv("ORLA_ADDR"), "http://localhost:8081"), "orla daemon address")
+
+	client := func() *Client { return New(addr) }
+	root.AddCommand(newBackendCmd(client), newStageCmd(client), newFeedbackCmd(client))
+	return root
+}
+
+func newBackendCmd(client func() *Client) *cobra.Command {
+	cmd := &cobra.Command{Use: "backend", Short: "Manage backends"}
+	cmd.AddCommand(
+		newBackendCreateCmd(client),
+		newBackendListCmd(client),
+		newBackendGetCmd(client),
+		newBackendRmCmd(client),
+	)
+	return cmd
+}
+
+func newBackendCreateCmd(client func() *Client) *cobra.Command {
+	var req wire.CreateBackendRequest
+	var inCost, outCost, quality, rate float64
+	cmd := &cobra.Command{
+		Use:   "create",
+		Short: "Register a backend",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			f := cmd.Flags()
+			if f.Changed("input-cost") {
+				req.InputCostPerMtoken = &inCost
+			}
+			if f.Changed("output-cost") {
+				req.OutputCostPerMtoken = &outCost
+			}
+			if f.Changed("quality") {
+				req.Quality = &quality
+			}
+			if f.Changed("rate") {
+				req.RatePerSecond = &rate
+			}
+			b, err := client().CreateBackend(cmd.Context(), req)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("registered backend %q -> %s\n", b.Name, cmp.Or(ptr(b.ModelID), "(tool)"))
+			return nil
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&req.Name, "name", "", "backend name (required)")
+	f.StringVar(&req.Endpoint, "endpoint", "", "OpenAI-compatible base URL (required)")
+	f.StringVar(&req.ModelID, "model", "", "provider-prefixed model id, e.g. ollama:qwen2.5:0.5b")
+	f.StringVar(&req.APIKeyEnvVar, "api-key-env", "", "env var orla reads the API key from")
+	f.Int32Var(&req.MaxConcurrency, "max-concurrency", 1, "max concurrent requests")
+	f.StringVar(&req.Kind, "kind", "", "backend kind: llm (default) or tool")
+	f.StringVar(&req.ToolKind, "tool-kind", "", "tool kind, for kind=tool")
+	f.Float64Var(&inCost, "input-cost", 0, "input cost per million tokens")
+	f.Float64Var(&outCost, "output-cost", 0, "output cost per million tokens")
+	f.Float64Var(&quality, "quality", 0, "quality prior")
+	f.Float64Var(&rate, "rate", 0, "requests per second cap")
+	_ = cmd.MarkFlagRequired("name")
+	_ = cmd.MarkFlagRequired("endpoint")
+	return cmd
+}
+
+func newBackendListCmd(client func() *Client) *cobra.Command {
+	var output string
+	cmd := &cobra.Command{
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List backends",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			bs, err := client().ListBackends(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if output == "json" {
+				return printJSON(bs)
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+			_, _ = fmt.Fprintln(tw, "NAME\tKIND\tMODEL\tCIRCUIT")
+			for _, b := range bs {
+				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", b.Name, b.Kind, cmp.Or(ptr(b.ModelID), "-"), cmp.Or(b.CircuitBreaker, "-"))
+			}
+			return tw.Flush()
+		},
+	}
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "output format: table or json")
+	return cmd
+}
+
+func newBackendGetCmd(client func() *Client) *cobra.Command {
+	return &cobra.Command{
+		Use:   "get NAME",
+		Short: "Show one backend",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			b, err := client().GetBackend(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return printJSON(b)
+		},
+	}
+}
+
+func newBackendRmCmd(client func() *Client) *cobra.Command {
+	return &cobra.Command{
+		Use:   "rm NAME",
+		Short: "Remove a backend",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := client().DeleteBackend(cmd.Context(), args[0]); err != nil {
+				return err
+			}
+			fmt.Printf("removed backend %q\n", args[0])
+			return nil
+		},
+	}
+}
+
+func newStageCmd(client func() *Client) *cobra.Command {
+	cmd := &cobra.Command{Use: "stage", Short: "Manage stage mappings"}
+	cmd.AddCommand(
+		newStageMapCmd(client),
+		newStageListCmd(client),
+		newStageGetCmd(client),
+		newStageRmCmd(client),
+	)
+	return cmd
+}
+
+func newStageMapCmd(client func() *Client) *cobra.Command {
+	return &cobra.Command{
+		Use:   "map STAGE BACKEND",
+		Short: "Point a stage at a backend",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			s, err := client().MapStage(cmd.Context(), args[0], wire.MapStageRequest{Backend: args[1]})
+			if err != nil {
+				return err
+			}
+			fmt.Printf("mapped stage %q -> %s\n", s.ID, s.Backend)
+			return nil
+		},
+	}
+}
+
+func newStageListCmd(client func() *Client) *cobra.Command {
+	var output string
+	cmd := &cobra.Command{
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List stage mappings",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ss, err := client().ListStages(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if output == "json" {
+				return printJSON(ss)
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+			_, _ = fmt.Fprintln(tw, "STAGE\tBACKEND")
+			for _, s := range ss {
+				_, _ = fmt.Fprintf(tw, "%s\t%s\n", s.ID, cmp.Or(s.Backend, "-"))
+			}
+			return tw.Flush()
+		},
+	}
+	cmd.Flags().StringVarP(&output, "output", "o", "table", "output format: table or json")
+	return cmd
+}
+
+func newStageGetCmd(client func() *Client) *cobra.Command {
+	return &cobra.Command{
+		Use:   "get STAGE",
+		Short: "Show one stage",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			s, err := client().GetStage(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return printJSON(s)
+		},
+	}
+}
+
+func newStageRmCmd(client func() *Client) *cobra.Command {
+	return &cobra.Command{
+		Use:   "rm STAGE",
+		Short: "Remove a stage",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := client().DeleteStage(cmd.Context(), args[0]); err != nil {
+				return err
+			}
+			fmt.Printf("removed stage %q\n", args[0])
+			return nil
+		},
+	}
+}
+
+func newFeedbackCmd(client func() *Client) *cobra.Command {
+	var stage, note string
+	var rating float64
+	cmd := &cobra.Command{
+		Use:   "feedback COMPLETION_ID",
+		Short: "Report the outcome of a completion for a stage",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := wire.FeedbackRequest{CompletionID: args[0], StageID: stage, Notes: note}
+			if cmd.Flags().Changed("rating") {
+				req.Rating = &rating
+			}
+			if err := client().SubmitFeedback(cmd.Context(), req); err != nil {
+				return err
+			}
+			fmt.Printf("recorded feedback for %s (stage %q)\n", args[0], stage)
+			return nil
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&stage, "stage", "", "stage the completion belongs to (required)")
+	f.Float64Var(&rating, "rating", 0, "rating between 0 and 1")
+	f.StringVar(&note, "note", "", "optional free-text note")
+	_ = cmd.MarkFlagRequired("stage")
+	return cmd
+}
+
+func printJSON(v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(b))
+	return nil
+}
+
+func ptr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}

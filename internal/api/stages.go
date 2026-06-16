@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/harvard-cns/orla/internal/stages"
+	"github.com/harvard-cns/orla/internal/wire"
 )
 
 // RegisterStageRoutes mounts the stage endpoints onto r. Routes:
@@ -65,21 +66,13 @@ func (h *stageHandler) get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s)
 }
 
-// putRequest is the wire shape for full-replace. id comes from the URL,
-// not the body.
-type putRequest struct {
-	Backend         string         `json:"backend"`
-	ReasoningEffort string         `json:"reasoning_effort"`
-	Labels          map[string]any `json:"labels"`
-}
-
 func (h *stageHandler) put(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		writeErrorMsg(w, http.StatusBadRequest, "id is required")
 		return
 	}
-	var body putRequest
+	var body wire.MapStageRequest
 	if !decodeJSON(w, r, &body) {
 		return
 	}

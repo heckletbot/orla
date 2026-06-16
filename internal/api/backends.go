@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/harvard-cns/orla/internal/backends"
+	"github.com/harvard-cns/orla/internal/wire"
 )
 
 // BackendLifecycle is the subset of scheduler.Scheduler the backend
@@ -69,33 +70,8 @@ type backendHandler struct {
 	deps BackendDeps
 }
 
-// createRequest is the POST wire shape. Name lives in the body for
-// symmetry with the daemon's own RegisterBackend calls. Otherwise
-// we would need a sub-resource collection trick.
-//
-// Kind defaults to "llm" when omitted. For "llm" backends, ModelID is
-// required. For "tool" backends, ToolKind is required.
-type createRequest struct {
-	Name                string   `json:"name"`
-	Kind                string   `json:"kind,omitempty"`
-	Endpoint            string   `json:"endpoint"`
-	APIKeyEnvVar        string   `json:"api_key_env_var"`
-	MaxConcurrency      int32    `json:"max_concurrency"`
-	Quality             *float64 `json:"quality"`
-	RatePerSecond       *float64 `json:"rate_per_second"`
-
-	// LLM fields:
-	ModelID             string   `json:"model_id,omitempty"`
-	InputCostPerMtoken  *float64 `json:"input_cost_per_mtoken,omitempty"`
-	OutputCostPerMtoken *float64 `json:"output_cost_per_mtoken,omitempty"`
-
-	// Tool fields:
-	ToolKind string             `json:"tool_kind,omitempty"`
-	Rates    map[string]float64 `json:"rates,omitempty"`
-}
-
 func (h *backendHandler) create(w http.ResponseWriter, r *http.Request) {
-	var req createRequest
+	var req wire.CreateBackendRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
