@@ -4,7 +4,7 @@ The OpenAI-compatible inference entry point. Point any OpenAI-compatible client 
 
 ## Wire shape
 
-Request: standard OpenAI chat completion plus identity metadata. See [`concepts.md`](concepts.md#identity-tags) for the full tag list.
+Request: standard OpenAI chat completion plus identity metadata. See [`concepts.md`](concepts.md#identity-tags) for the full tag list. 中文：[`concepts-zh.md`](concepts-zh.md#身份标签)。
 
 Response: standard OpenAI chat completion. The response's `model` field reports the **resolved backend name**, not necessarily what the client sent in its `model` field. Divergence is by design under the developer and platform engineer split documented in [`concepts.md`](concepts.md).
 
@@ -40,7 +40,7 @@ Every dispatched request results in one row in `completion_records` with the fol
 - `tags_json`: the full `X-Orla-Tag-*` map
 - `prompt_tokens`, `completion_tokens`, `latency_ms`, `cost_usd`, `status`, `created_at`
 
-This is the mapper's primary observation channel. See [`storage.md`](storage.md).
+This is the mapper's primary observation channel. See [`storage.md`](storage.md). 中文：[`storage-zh.md`](storage-zh.md)。
 
 ## Streaming semantics
 
@@ -64,3 +64,5 @@ All non-200 responses use the OpenAI error envelope:
 ```
 
 Status code drives the `type` field. Clients that already handle OpenAI errors handle these correctly.
+
+中文原文：[`proxy-zh.md`](proxy-zh.md)。

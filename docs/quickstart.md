@@ -143,6 +143,7 @@ The next request on `planning` goes to the new backend. No restart, no agent cod
 
 ## What to read next
 
-- [`docs/concepts.md`](concepts.md) for the model behind stages, backends, and the feedback loop.
-- [`docs/proxy.md`](proxy.md) for the full wire contract on `/v1/chat/completions`.
-- [`docs/storage.md`](storage.md) for the Postgres schema your mapper reads from.
+- [`docs/concepts.md`](concepts.md) for the model behind stages, backends, and the feedback loop. 中文：[`concepts-zh.md`](concepts-zh.md)。
+- [`docs/three-components.md`](three-components.md) for a code-level walkthrough of Stage Router, Telemetry, and Runtime Mapper.
+- [`docs/proxy.md`](proxy.md) for the full wire contract on `/v1/chat/completions`. 中文：[`proxy-zh.md`](proxy-zh.md)。
+- [`docs/storage.md`](storage.md) for the Postgres schema your mapper reads from. 中文：[`storage-zh.md`](storage-zh.md)。

@@ -2,7 +2,7 @@
 
 Orla is an OpenAI-compatible proxy that sits between agent code and the LLMs or tools that serve it. Its job is to route each call to the right backend right now, record what happened, and let an external mapper change those routings as it learns.
 
-This page explains the model. For an end-to-end walkthrough, see [`quickstart.md`](quickstart.md).
+This page explains the model. For an end-to-end walkthrough, see [`quickstart.md`](quickstart.md). 中文：[`quickstart-zh.md`](quickstart-zh.md)。
 
 ## The runtime adaptation loop
 
@@ -158,6 +158,9 @@ Tags land in `completion_records.tags_json` and are available to the mapper. The
 
 ## What to read next
 
-- [`quickstart.md`](quickstart.md) for hands-on setup.
-- [`proxy.md`](proxy.md) for the exact wire contract.
-- [`storage.md`](storage.md) for the Postgres schema your mapper reads.
+- [`quickstart.md`](quickstart.md) for hands-on setup. 中文：[`quickstart-zh.md`](quickstart-zh.md)。
+- [`three-components.md`](three-components.md) for a code-level walkthrough of Stage Router, Telemetry, and Runtime Mapper.
+- [`proxy.md`](proxy.md) for the exact wire contract. 中文：[`proxy-zh.md`](proxy-zh.md)。
+- [`storage.md`](storage.md) for the Postgres schema your mapper reads. 中文：[`storage-zh.md`](storage-zh.md)。
+
+完整中文文档：[`concepts-zh.md`](concepts-zh.md)。

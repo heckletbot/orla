@@ -204,3 +204,5 @@ The schema supports HA. Multiple orla processes can point at the same database.
 There is no automatic pruning. The mapper deletes what it does not need, or runs a periodic vacuum job. Orla does not opinionatedly delete observation data because the mapper may want long history.
 
 If `completion_records` growth becomes a concern, Postgres native partitioning by `created_at` is the planned mitigation. Adding partitioning later is a non-breaking schema change.
+
+中文原文：[`storage-zh.md`](storage-zh.md)。
